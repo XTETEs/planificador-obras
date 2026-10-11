@@ -1,0 +1,144 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// This security rules file assumes the following data structures:
+//
+// Collection: obras
+// Document ID: obraId (string)
+// Fields:
+//   - id: string (required, 1-100 chars, must match document ID) - Identificador único de la obra
+//   - nombre: string (required, 1-200 chars) - Nombre descriptivo de la obra
+//   - activo: bool | number (required, 0, 1, false, or true) - Indicador de obra activa
+//
+// Collection: tareas
+// Document ID: tareaId (string)
+// Fields:
+//   - id: string (required, 1-100 chars, must match document ID) - Identificador único de la tarea
+//   - obra_id: string (required, 1-100 chars) - ID de la obra asociada
+//   - fecha_semana: string (required, YYYY-MM-DD, 10 chars) - Lunes correspondiente a la semana planificada
+//   - dia_semana: string (required, 'Lunes'..'Domingo') - Día asignado dentro de la semana
+//   - actividad: string (required, 1-1000 chars) - Descripción de la actividad a realizar
+//   - gremio: string (required, 1-100 chars) - Gremio o especialidad responsable
+//   - completada: bool | number (required, 0, 1, false, or true) - Estado de finalización de la tarea
+//   - notas: string (optional, 0-2000 chars) - Observaciones adicionales
+//   - fecha_creado: string (required, ISO 8601 string, immutable) - Fecha y hora de creación de la tarea
+//
+// Note: Client authentication is currently unconstrained as Firebase Auth
+// is not yet integrated in the web application. Robust schema constraints,
+// field-level type validation, size limits, and immutability checks are
+// enforced to ensure data integrity.
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Validate boolean or binary integer (0 or 1)
+    function isValidFlag(val) {
+      return val is bool || (val is number && (val == 0 || val == 1));
+    }
+
+    // Validate allowed days of the week in Spanish
+    function isValidDiaSemana(dia) {
+      return dia is string &&
+        dia in [
+          'Lunes', 'Martes', 'Miércoles', 'Miercoles',
+          'Jueves', 'Viernes', 'Sábado', 'Sabado', 'Domingo'
+        ];
+    }
+
+    // Validate optional notes field (must be string <= 2000 chars if present)
+    function isValidOptionalNotas(data) {
+      return !('notas' in data) ||
+        (data.notas is string && data.notas.size() <= 2000);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    // Domain validator for 'obras' documents
+    function isValidObra(data, obraId) {
+      return data.keys().hasAll(['id', 'nombre', 'activo']) &&
+        data.keys().hasOnly(['id', 'nombre', 'activo']) &&
+        data.id is string &&
+        data.id.size() > 0 &&
+        data.id.size() <= 100 &&
+        data.id == obraId &&
+        data.nombre is string &&
+        data.nombre.size() > 0 &&
+        data.nombre.size() <= 200 &&
+        isValidFlag(data.activo);
+    }
+
+    // Domain validator for 'tareas' documents
+    function isValidTarea(data, tareaId) {
+      return data.keys().hasAll(['id', 'obra_id', 'fecha_semana', 'dia_semana', 'actividad', 'gremio', 'completada', 'fecha_creado']) &&
+        data.keys().hasOnly(['id', 'obra_id', 'fecha_semana', 'dia_semana', 'actividad', 'gremio', 'completada', 'notas', 'fecha_creado']) &&
+        data.id is string &&
+        data.id.size() > 0 &&
+        data.id.size() <= 100 &&
+        data.id == tareaId &&
+        data.obra_id is string &&
+        data.obra_id.size() > 0 &&
+        data.obra_id.size() <= 100 &&
+        data.fecha_semana is string &&
+        data.fecha_semana.size() == 10 &&
+        data.fecha_semana.matches('^\\d{4}-\\d{2}-\\d{2}$') &&
+        isValidDiaSemana(data.dia_semana) &&
+        data.actividad is string &&
+        data.actividad.size() > 0 &&
+        data.actividad.size() <= 1000 &&
+        data.gremio is string &&
+        data.gremio.size() > 0 &&
+        data.gremio.size() <= 100 &&
+        isValidFlag(data.completada) &&
+        isValidOptionalNotas(data) &&
+        data.fecha_creado is string &&
+        data.fecha_creado.size() >= 10 &&
+        data.fecha_creado.size() <= 50 &&
+        data.fecha_creado.matches('^\\d{4}-\\d{2}-\\d{2}T.*');
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    // Root Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Obras Collection
+    match /obras/{obraId} {
+      allow read: if true;
+
+      allow create: if isValidObra(request.resource.data, obraId);
+
+      allow update: if isValidObra(request.resource.data, obraId) &&
+        request.resource.data.id == resource.data.id;
+
+      allow delete: if true;
+    }
+
+    // Tareas Collection
+    match /tareas/{tareaId} {
+      allow read: if true;
+
+      allow create: if isValidTarea(request.resource.data, tareaId);
+
+      allow update: if isValidTarea(request.resource.data, tareaId) &&
+        request.resource.data.id == resource.data.id &&
+        request.resource.data.fecha_creado == resource.data.fecha_creado;
+
+      allow delete: if true;
+    }
+  }
+}
