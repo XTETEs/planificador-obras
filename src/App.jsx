@@ -544,7 +544,7 @@ const client = AiKit.createClient();
 const obrasTextList = obras.map(o => `ID "${o[0]}": "${o[1]}"`).join('\n');
 const systemPrompt = `
 Eres un experto planificador y estructurador de agendas de obra en España.
-Tu misión es analizar una transcripción de voz (dictado) de Joaquín, Jefe de Obra de ENUE, y extraer actividades y organizarlas por días de la semana y obras.
+Tu misión es analizar una transcripción de voz (dictado) de obra y extraer actividades y organizarlas por días de la semana y obras.
 Estas son las obras cargadas actualmente en el sistema (usa exactamente sus IDs):
 ${obrasTextList}
 Si el dictado menciona o alude fuertemente a una obra, por favor emparéjala con su ID. Si no se puede deducir la obra, usa la obra '1' por defecto (Edificio Salamanca 50).
@@ -683,7 +683,7 @@ Planificador Semanal
 </span>
 )}
 </h1>
-<p className="text-sm text-slate-500">Joaquín • Jefe de Obra • ENUE Proyectos y Construcción</p>
+<p className="text-sm text-slate-500">ENUE Proyectos y Construcción</p>
 </div>
 </div>
 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
@@ -1690,10 +1690,10 @@ return (
 </div>
 <div>
 <div className="h-16 flex items-end justify-center mb-1">
-<span className="text-xs font-bold text-amber-500 select-none opacity-50 underline decoration-solid">Joaquín • JEFE DE OBRA</span>
+<span className="text-[10px] text-slate-300 italic">Firma de Dirección / Supervisión</span>
 </div>
 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Supervisor (Jefe de Obra)</p>
-<p className="text-xs font-bold text-slate-800 border-t border-solid border-slate-200 pt-1 w-48 mx-auto">Joaquín</p>
+<p className="text-xs font-bold text-slate-800 border-t border-solid border-slate-200 pt-1 w-48 mx-auto">Dirección de Obra</p>
 </div>
 </div>
 {/* Pie de página del documento */}
