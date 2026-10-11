@@ -1,4 +1,5 @@
 {
-  "buildCommand": "node scripts/build.mjs",
+  "framework": "vite",
+  "buildCommand": "npm run build",
   "outputDirectory": "dist"
 }
