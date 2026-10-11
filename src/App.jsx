@@ -24,8 +24,10 @@ ArrowRightLeft,
 Layers,
 Printer,
 MoreVertical,
-GripVertical
+GripVertical,
+CloudUpload
 } from 'lucide-react';
+import { migrateLocalDataToFirestore } from './services/db.js';
 // EMBEDDED DATABASES ID
 const DB_ID = '6a548f958d05750f33c2b531';
 const DIAS_SEMANA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
@@ -178,6 +180,37 @@ loadData(); // Reload safely when synched
 });
 return () => unsubscribe();
 }, [db, loadData]);
+// Migration state from local IndexedDB to Firebase
+const [isMigrating, setIsMigrating] = useState(false);
+const handleMigrateLocalData = async () => {
+  setIsMigrating(true);
+  try {
+    const res = await migrateLocalDataToFirestore();
+    if (res.success) {
+      setSuccessMessage(res.message);
+      setError(null);
+      await loadData();
+    } else {
+      setError(res.message);
+    }
+  } catch (err) {
+    setError('Error al volcar datos locales: ' + err.message);
+  } finally {
+    setIsMigrating(false);
+  }
+};
+useEffect(() => {
+  const alreadyMigrated = localStorage.getItem('local_db_migrated_v1');
+  if (!alreadyMigrated) {
+    migrateLocalDataToFirestore().then((res) => {
+      if (res.success && (res.countObras > 0 || res.countTareas > 0)) {
+        localStorage.setItem('local_db_migrated_v1', 'true');
+        setSuccessMessage(`Sincronización automática: se han volcado ${res.countObras} obras y ${res.countTareas} tareas locales a Firebase.`);
+        loadData();
+      }
+    }).catch(console.error);
+  }
+}, [loadData]);
 // Change week
 const navigateWeek = (weeksToShift) => {
 const current = new Date(currentWeekMonday);
@@ -674,6 +707,16 @@ Planificador Semanal
 </div>
 </div>
 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+{/* Volcar local a Firebase */}
+<button
+onClick={handleMigrateLocalData}
+disabled={isMigrating}
+title="Detectar y volcar datos guardados localmente en este navegador hacia la base de datos compartida en Firebase"
+className="bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white hover:cursor-pointer font-semibold px-3.5 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-md shadow-sky-600/10 shrink-0 text-sm"
+>
+<CloudUpload className={`w-4 h-4 ${isMigrating ? 'animate-bounce' : ''}`} />
+<span>{isMigrating ? 'Volcando...' : 'Volcar local a Firebase'}</span>
+</button>
 {/* Dictate Button */}
 <button
 onClick={() => { setIsDictatingModalOpen(true); setParsedTasks([]); }}

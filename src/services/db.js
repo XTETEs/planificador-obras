@@ -1,4 +1,5 @@
 import { initializeApp, getApps } from 'firebase/app';
+import initSqlJs from 'sql.js';
 import {
   getFirestore,
   collection,
@@ -354,3 +355,134 @@ if (typeof window !== 'undefined') {
     fetch: (...args) => window.fetch(...args)
   };
 }
+
+/**
+ * Vuelca los datos guardados en SQLite / IndexedDB local de este navegador hacia Firestore.
+ */
+export async function migrateLocalDataToFirestore() {
+  if (typeof window === 'undefined' || !window.indexedDB) {
+    return { success: false, countObras: 0, countTareas: 0, message: 'IndexedDB no está disponible en este entorno.' };
+  }
+
+  // 1. Leer el buffer SQLite de IndexedDB 'planificador-obras' -> 'kv' -> 'sqlite'
+  const saved = await new Promise((resolve) => {
+    try {
+      const req = window.indexedDB.open('planificador-obras', 1);
+      req.onerror = () => resolve(null);
+      req.onupgradeneeded = () => resolve(null);
+      req.onsuccess = () => {
+        const idb = req.result;
+        if (!idb.objectStoreNames.contains('kv')) {
+          idb.close();
+          return resolve(null);
+        }
+        const tx = idb.transaction('kv', 'readonly');
+        const store = tx.objectStore('kv');
+        const getReq = store.get('sqlite');
+        getReq.onsuccess = () => {
+          idb.close();
+          resolve(getReq.result);
+        };
+        getReq.onerror = () => {
+          idb.close();
+          resolve(null);
+        };
+      };
+    } catch (_) {
+      resolve(null);
+    }
+  });
+
+  if (!saved || !saved.byteLength) {
+    return {
+      success: false,
+      countObras: 0,
+      countTareas: 0,
+      message: 'No se encontraron datos locales previos guardados en este navegador.'
+    };
+  }
+
+  try {
+    const SQL = await initSqlJs({
+      locateFile: (file) => (file.endsWith('.wasm') ? '/sql-wasm.wasm' : file)
+    });
+    const localDb = new SQL.Database(new Uint8Array(saved));
+
+    let localObras = [];
+    try {
+      const res = localDb.exec('SELECT id, nombre, activo FROM obras');
+      if (res.length > 0 && res[0].values) {
+        localObras = res[0].values.map(([id, nombre, activo]) => ({
+          id: String(id),
+          nombre: String(nombre),
+          activo: activo !== undefined ? Number(activo) : 1
+        }));
+      }
+    } catch (e) {
+      console.warn('Error leyendo obras locales:', e);
+    }
+
+    let localTareas = [];
+    try {
+      const res = localDb.exec('SELECT id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado FROM tareas');
+      if (res.length > 0 && res[0].values) {
+        localTareas = res[0].values.map(([id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado]) => ({
+          id: String(id),
+          obra_id: String(obra_id),
+          fecha_semana: String(fecha_semana),
+          dia_semana: String(dia_semana),
+          actividad: String(actividad),
+          gremio: String(gremio || 'Otros'),
+          completada: Number(completada) || 0,
+          notas: String(notas || ''),
+          fecha_creado: String(fecha_creado || new Date().toISOString())
+        }));
+      }
+    } catch (e) {
+      console.warn('Error leyendo tareas locales:', e);
+    }
+
+    if (localObras.length === 0 && localTareas.length === 0) {
+      return {
+        success: false,
+        countObras: 0,
+        countTareas: 0,
+        message: 'La base de datos local no contiene ninguna obra ni tarea.'
+      };
+    }
+
+    // Subir a Firestore
+    let batch = writeBatch(firestore);
+    let opCount = 0;
+
+    for (const obra of localObras) {
+      batch.set(doc(firestore, 'obras', obra.id), obra, { merge: true });
+      opCount++;
+    }
+
+    for (const tarea of localTareas) {
+      batch.set(doc(firestore, 'tareas', tarea.id), tarea, { merge: true });
+      opCount++;
+      if (opCount >= 400) {
+        await batch.commit();
+        batch = writeBatch(firestore);
+        opCount = 0;
+      }
+    }
+
+    if (opCount > 0) {
+      await batch.commit();
+    }
+
+    return {
+      success: true,
+      countObras: localObras.length,
+      countTareas: localTareas.length,
+      message: `¡Volcado completado con éxito! Se han volcado ${localObras.length} obras y ${localTareas.length} tareas locales a la base de datos de Firebase.`
+    };
+  } catch (err) {
+    console.error('Error durante la migración local a Firestore:', err);
+    return { success: false, message: 'Error durante la migración: ' + err.message };
+  }
+}
+
