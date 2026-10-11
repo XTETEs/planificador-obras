@@ -1,0 +1,14 @@
+{
+  "name": "planificador-obras",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "preview": "npx serve dist",
+    "dev": "npx vercel dev"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
