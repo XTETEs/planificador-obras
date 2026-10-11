@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "preview": "npx serve dist",
-    "dev": "npx vercel dev"
+    "start": "node scripts/serve.mjs",
+    "preview": "node scripts/serve.mjs",
+    "dev": "node scripts/serve.mjs"
   },
   "engines": {
     "node": ">=18"
