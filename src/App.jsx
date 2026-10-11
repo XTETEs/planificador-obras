@@ -30,49 +30,75 @@ import { migrateLocalDataToFirestore } from './services/db.js';
 // EMBEDDED DATABASES ID
 const DB_ID = '6a548f958d05750f33c2b531';
 const DIAS_SEMANA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
+const MESES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+];
 const GREMIOS_PREDEFINIDOS = [
-'Albañilería', 'Estructura', 'Pintura', 'Fontanería', 'Electricidad',
-'Pladur / Yeso', 'Climatización', 'Carpintería', 'Instalaciones',
-'Limpieza', 'Cerramientos', 'Jardinería / Exteriores', 'Otros'
+  'Albañilería', 'Estructura', 'Pintura', 'Fontanería', 'Electricidad',
+  'Pladur / Yeso', 'Climatización', 'Carpintería', 'Instalaciones',
+  'Limpieza', 'Cerramientos', 'Jardinería / Exteriores', 'Otros'
 ];
 const getGremioTagClasses = (gremio, completada = false) => {
-if (completada) return 'bg-slate-100 text-slate-400';
-const clasesPorGremio = {
-'Albañilería': 'bg-blue-100 text-blue-800',
-'Estructura': 'bg-violet-100 text-violet-800',
-'Pintura': 'bg-pink-100 text-pink-800',
-'Fontanería': 'bg-cyan-100 text-cyan-800',
-'Electricidad': 'bg-yellow-100 text-yellow-800',
-'Pladur / Yeso': 'bg-fuchsia-100 text-fuchsia-800',
-'Climatización': 'bg-indigo-100 text-indigo-800',
-'Carpintería': 'bg-orange-100 text-orange-800',
-'Instalaciones': 'bg-teal-100 text-teal-800',
-'Limpieza': 'bg-green-100 text-green-800',
-'Cerramientos': 'bg-red-100 text-red-800',
-'Jardinería / Exteriores': 'bg-lime-100 text-lime-800',
-'Otros': 'bg-slate-100 text-slate-700'
-};
-return clasesPorGremio[gremio] || clasesPorGremio['Otros'];
+  if (completada) return 'bg-slate-100 text-slate-400';
+  const clasesPorGremio = {
+    'Albañilería': 'bg-blue-100 text-blue-800',
+    'Estructura': 'bg-violet-100 text-violet-800',
+    'Pintura': 'bg-pink-100 text-pink-800',
+    'Fontanería': 'bg-cyan-100 text-cyan-800',
+    'Electricidad': 'bg-yellow-100 text-yellow-800',
+    'Pladur / Yeso': 'bg-fuchsia-100 text-fuchsia-800',
+    'Climatización': 'bg-indigo-100 text-indigo-800',
+    'Carpintería': 'bg-orange-100 text-orange-800',
+    'Instalaciones': 'bg-teal-100 text-teal-800',
+    'Limpieza': 'bg-green-100 text-green-800',
+    'Cerramientos': 'bg-red-100 text-red-800',
+    'Jardinería / Exteriores': 'bg-lime-100 text-lime-800',
+    'Otros': 'bg-slate-100 text-slate-700'
+  };
+  return clasesPorGremio[gremio] || clasesPorGremio['Otros'];
 };
 // Helper to format ISO dates
 const getMonday = (d) => {
-const date = new Date(d);
-const day = date.getDay();
-const diff = date.getDate() - day + (day === 0 ? -6 : 1); // Adjust for Sunday
-const monday = new Date(date.setDate(diff));
-return monday.toISOString().split('T')[0];
+  let date;
+  if (!d) {
+    date = new Date();
+  } else if (typeof d === 'string') {
+    const parts = d.split('-');
+    if (parts.length === 3) {
+      date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 12, 0, 0);
+    } else {
+      date = new Date(d);
+    }
+  } else if (d instanceof Date) {
+    date = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0);
+  } else {
+    date = new Date(d);
+  }
+  const day = date.getDay();
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1); // Adjust for Sunday
+  date.setDate(diff);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const dayOfMonth = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dayOfMonth}`;
 };
 const isTaskCompleted = (value) => {
-if (value === true) return true;
-if (typeof value === 'number') return value === 1;
-if (value === null || value === undefined) return false;
-const normalized = String(value).trim().toLowerCase();
-return ['1', 'true', 'sí', 'si', 'yes', 'completada', 'completado', 'completed', 'finalizada', 'finalizado', 'done'].includes(normalized);
+  if (value === true) return true;
+  if (typeof value === 'number') return value === 1;
+  if (value === null || value === undefined) return false;
+  const normalized = String(value).trim().toLowerCase();
+  return ['1', 'true', 'sí', 'si', 'yes', 'completada', 'completado', 'completed', 'finalizada', 'finalizado', 'done'].includes(normalized);
 };
 const formatFriendlyDate = (dateStr) => {
-if (!dateStr) return '';
-const d = new Date(dateStr);
-return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+  if (!dateStr) return '';
+  const parts = String(dateStr).split('-');
+  if (parts.length === 3) {
+    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 12, 0, 0);
+    return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 const getWeekdayDateLabel = (weekMonday, dayName) => {
 const dayIndex = { 'Lunes': 0, 'Martes': 1, 'Miércoles': 2, 'Jueves': 3, 'Viernes': 4, 'Sábado': 5 }[dayName];
@@ -96,6 +122,11 @@ const [syncing, setSyncing] = useState(false);
 const [isDictatingModalOpen, setIsDictatingModalOpen] = useState(false);
 const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
 const [isNewObraModalOpen, setIsNewObraModalOpen] = useState(false);
+const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
+const [calendarViewDate, setCalendarViewDate] = useState(() => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1, 12);
+});
 // PDF printing state
 const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 const [selectedPrintObraId, setSelectedPrintObraId] = useState('all');
@@ -193,14 +224,138 @@ useEffect(() => {
 }, [loadData]);
 // Change week
 const navigateWeek = (weeksToShift) => {
-const current = new Date(currentWeekMonday);
-current.setDate(current.getDate() + weeksToShift * 7);
-setCurrentWeekMonday(getMonday(current));
+  const parts = (currentWeekMonday || '').split('-').map(Number);
+  const current = parts.length === 3
+    ? new Date(parts[0], parts[1] - 1, parts[2], 12)
+    : new Date();
+  current.setDate(current.getDate() + weeksToShift * 7);
+  setCurrentWeekMonday(getMonday(current));
 };
 // Set to current week
 const goToToday = () => {
-setCurrentWeekMonday(getMonday(new Date()));
+  setCurrentWeekMonday(getMonday(new Date()));
 };
+// Calendar Modal navigation helpers
+const openCalendarModal = () => {
+  if (currentWeekMonday) {
+    const parts = currentWeekMonday.split('-').map(Number);
+    if (parts.length === 3) {
+      setCalendarViewDate(new Date(parts[0], parts[1] - 1, 1, 12));
+    } else {
+      setCalendarViewDate(new Date());
+    }
+  } else {
+    setCalendarViewDate(new Date());
+  }
+  setIsCalendarModalOpen(true);
+};
+const prevCalendarMonth = () => {
+  setCalendarViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1, 12));
+};
+const nextCalendarMonth = () => {
+  setCalendarViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1, 12));
+};
+const jumpCalendarToToday = () => {
+  const today = new Date();
+  setCalendarViewDate(new Date(today.getFullYear(), today.getMonth(), 1, 12));
+  setCurrentWeekMonday(getMonday(today));
+  setIsCalendarModalOpen(false);
+};
+const handleSelectCalendarDay = (cell) => {
+  const monday = getMonday(cell.dateStr);
+  setCurrentWeekMonday(monday);
+  setIsCalendarModalOpen(false);
+};
+
+const calendarYearOptions = useMemo(() => {
+  const currentY = new Date().getFullYear();
+  const years = [];
+  for (let y = currentY - 5; y <= currentY + 8; y++) {
+    years.push(y);
+  }
+  const viewY = calendarViewDate.getFullYear();
+  if (!years.includes(viewY)) {
+    years.push(viewY);
+    years.sort((a, b) => a - b);
+  }
+  return years;
+}, [calendarViewDate]);
+
+const taskCountByWeek = useMemo(() => {
+  const map = {};
+  todasLasTareas.forEach(t => {
+    if (t.fecha_semana) {
+      map[t.fecha_semana] = (map[t.fecha_semana] || 0) + 1;
+    }
+  });
+  return map;
+}, [todasLasTareas]);
+
+const todayIsoString = useMemo(() => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}, []);
+
+const calendarGridDays = useMemo(() => {
+  const viewYear = calendarViewDate.getFullYear();
+  const viewMonth = calendarViewDate.getMonth();
+
+  const firstDayOfMonth = new Date(viewYear, viewMonth, 1, 12);
+  const firstDayWeekday = (firstDayOfMonth.getDay() + 6) % 7; // 0 = Mon, 6 = Sun
+
+  const daysInCurrentMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const daysInPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
+
+  const cells = [];
+
+  // Trailing days from previous month
+  for (let i = firstDayWeekday - 1; i >= 0; i--) {
+    const dayNum = daysInPrevMonth - i;
+    const d = new Date(viewYear, viewMonth - 1, dayNum, 12);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    cells.push({
+      dateStr: `${y}-${m}-${day}`,
+      dayNum,
+      isCurrentMonth: false,
+      dateObj: d
+    });
+  }
+
+  // Days of current month
+  for (let dayNum = 1; dayNum <= daysInCurrentMonth; dayNum++) {
+    const m = String(viewMonth + 1).padStart(2, '0');
+    const day = String(dayNum).padStart(2, '0');
+    cells.push({
+      dateStr: `${viewYear}-${m}-${day}`,
+      dayNum,
+      isCurrentMonth: true,
+      dateObj: new Date(viewYear, viewMonth, dayNum, 12)
+    });
+  }
+
+  // Leading days of next month
+  const totalCells = cells.length > 35 ? 42 : 35;
+  const remaining = totalCells - cells.length;
+  for (let dayNum = 1; dayNum <= remaining; dayNum++) {
+    const d = new Date(viewYear, viewMonth + 1, dayNum, 12);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    cells.push({
+      dateStr: `${y}-${m}-${day}`,
+      dayNum,
+      isCurrentMonth: false,
+      dateObj: d
+    });
+  }
+
+  return cells;
+}, [calendarViewDate]);
 // Add new Construction site
 const handleAddObra = async (e) => {
 if (e) e.preventDefault();
@@ -767,23 +922,34 @@ className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-3 py-2.5 
 <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 block mb-1">Semana de Trabajo</label>
 <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg p-1">
 <button
+type="button"
 onClick={() => navigateWeek(-1)}
-className="p-1.5 hover:bg-white rounded-md text-slate-600 hover:cursor-pointer"
+title="Semana anterior"
+className="p-1.5 hover:bg-white rounded-md text-slate-600 hover:cursor-pointer transition-colors"
 >
 <ChevronLeft className="w-4 h-4" />
 </button>
-<span className="px-3 py-1 text-xs font-semibold text-slate-700 select-none flex items-center gap-1.5 min-w-[210px] justify-center">
-<Calendar className="w-3.5 h-3.5 text-amber-500" />
-Al {formatFriendlyDate(currentWeekMonday)}
-</span>
 <button
+type="button"
+onClick={openCalendarModal}
+title="Hacer clic para abrir el calendario en grande (cambiar mes o año)"
+className="px-3 py-1 text-xs font-semibold text-slate-700 hover:text-amber-800 hover:bg-white rounded-md transition-all flex items-center gap-1.5 min-w-[210px] justify-center cursor-pointer group shadow-2xs hover:shadow-xs"
+>
+<Calendar className="w-4 h-4 text-amber-500 group-hover:scale-125 transition-transform shrink-0" />
+<span className="group-hover:underline decoration-amber-500 underline-offset-2">Al {formatFriendlyDate(currentWeekMonday)}</span>
+</button>
+<button
+type="button"
 onClick={() => navigateWeek(1)}
-className="p-1.5 hover:bg-white rounded-md text-slate-600 hover:cursor-pointer"
+title="Semana siguiente"
+className="p-1.5 hover:bg-white rounded-md text-slate-600 hover:cursor-pointer transition-colors"
 >
 <ChevronRight className="w-4 h-4" />
 </button>
 <button
+type="button"
 onClick={goToToday}
+title="Ir a la semana actual"
 className="text-[10px] bg-slate-200 hover:bg-slate-300 font-bold px-2 py-1 rounded-md text-slate-700 hover:cursor-pointer transition-all ml-1"
 >
 Hoy
@@ -1447,6 +1613,185 @@ Listo / Cerrar
 </div>
 </div>
 </div>
+)}
+{/* MODAL: CALENDARIO EN GRANDE / SELECTOR DE FECHA */}
+{isCalendarModalOpen && (
+  <div 
+    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs"
+    onClick={(e) => {
+      if (e.target === e.currentTarget) setIsCalendarModalOpen(false);
+    }}
+  >
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      {/* Cabecera del modal */}
+      <div className="bg-slate-900 text-white p-4 sm:p-5 flex justify-between items-center">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl">
+            <Calendar className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="font-bold text-base sm:text-lg">Calendario de Planificación</h3>
+            <p className="text-xs text-slate-400">Selecciona cualquier día, mes o año para ver su semana</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setIsCalendarModalOpen(false)}
+          className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer border-none bg-transparent"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="p-4 sm:p-6 space-y-4">
+        {/* Barra de navegación de Mes y Año */}
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={prevCalendarMonth}
+              title="Mes anterior"
+              className="p-1.5 hover:bg-white rounded-lg text-slate-700 hover:shadow-xs transition-all cursor-pointer border border-transparent hover:border-slate-200"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={nextCalendarMonth}
+              title="Mes siguiente"
+              className="p-1.5 hover:bg-white rounded-lg text-slate-700 hover:shadow-xs transition-all cursor-pointer border border-transparent hover:border-slate-200"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Desplegables rápidos de Mes y Año */}
+          <div className="flex items-center gap-2 flex-1 justify-center min-w-[200px]">
+            <select
+              value={calendarViewDate.getMonth()}
+              onChange={(e) => {
+                const newMonth = parseInt(e.target.value, 10);
+                setCalendarViewDate(new Date(calendarViewDate.getFullYear(), newMonth, 1, 12));
+              }}
+              className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+            >
+              {MESES.map((m, idx) => (
+                <option key={m} value={idx}>{m}</option>
+              ))}
+            </select>
+
+            <select
+              value={calendarViewDate.getFullYear()}
+              onChange={(e) => {
+                const newYear = parseInt(e.target.value, 10);
+                setCalendarViewDate(new Date(newYear, calendarViewDate.getMonth(), 1, 12));
+              }}
+              className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+            >
+              {calendarYearOptions.map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Botón rápido para ir al día de hoy */}
+          <button
+            type="button"
+            onClick={jumpCalendarToToday}
+            className="text-xs bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-3 py-1.5 rounded-lg transition-all shadow-xs cursor-pointer"
+          >
+            Hoy
+          </button>
+        </div>
+
+        {/* Rejilla del Calendario */}
+        <div>
+          {/* Cabecera de días de la semana */}
+          <div className="grid grid-cols-7 gap-1 text-center mb-1">
+            {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map((d, i) => (
+              <div 
+                key={d} 
+                className={`text-[11px] font-bold uppercase tracking-wider py-1.5 ${
+                  i >= 5 ? 'text-slate-400' : 'text-slate-600'
+                }`}
+              >
+                {d}
+              </div>
+            ))}
+          </div>
+
+          {/* Días del mes */}
+          <div className="grid grid-cols-7 gap-1">
+            {calendarGridDays.map((cell) => {
+              const cellMonday = getMonday(cell.dateStr);
+              const isSelectedWeek = cellMonday === currentWeekMonday;
+              const isToday = cell.dateStr === todayIsoString;
+              const tasksInThisWeek = taskCountByWeek[cellMonday] || 0;
+
+              return (
+                <button
+                  key={cell.dateStr}
+                  type="button"
+                  onClick={() => handleSelectCalendarDay(cell)}
+                  title={`Seleccionar semana del ${formatFriendlyDate(cellMonday)}${tasksInThisWeek ? ` (${tasksInThisWeek} tareas)` : ''}`}
+                  className={`
+                    relative h-11 sm:h-12 rounded-xl flex flex-col items-center justify-center p-1 text-sm transition-all cursor-pointer
+                    ${!cell.isCurrentMonth ? 'text-slate-300 hover:text-slate-600 hover:bg-slate-100/60' : 'text-slate-800'}
+                    ${isSelectedWeek 
+                      ? 'bg-amber-100 font-extrabold text-amber-950 border border-amber-300 shadow-2xs' 
+                      : cell.isCurrentMonth ? 'hover:bg-amber-50/80 hover:border-amber-200 border border-transparent' : ''
+                    }
+                    ${isToday ? 'ring-2 ring-slate-900 font-bold' : ''}
+                  `}
+                >
+                  <span className={`text-xs sm:text-sm leading-none ${isToday ? 'text-amber-600 font-black' : ''}`}>
+                    {cell.dayNum}
+                  </span>
+                  
+                  {/* Indicador sutil de tareas en la semana (solo en el lunes) */}
+                  {tasksInThisWeek > 0 && cell.dateObj.getDay() === 1 && (
+                    <span 
+                      className="absolute bottom-1 px-1 py-0.2 bg-amber-500 text-slate-950 font-black text-[9px] rounded-full leading-tight shadow-2xs"
+                      title={`${tasksInThisWeek} tareas programadas en esta semana`}
+                    >
+                      {tasksInThisWeek}
+                    </span>
+                  )}
+
+                  {/* Indicador de 'Hoy' */}
+                  {isToday && (
+                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full mt-0.5" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Leyenda y pie del modal */}
+        <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-slate-500">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-md bg-amber-100 border border-amber-300 inline-block" />
+              Semana activa
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-md ring-2 ring-slate-900 inline-block" />
+              Hoy
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
+              Con tareas
+            </span>
+          </div>
+
+          <div className="text-slate-600 font-semibold">
+            Semana activa: <span className="text-amber-600 font-bold">{formatFriendlyDate(currentWeekMonday)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 )}
 </div> {/* Fin Dashboard Principal */}
 {/* NUEVO MODAL: VISTA DE IMPRESIÓN Y EXPORTACIÓN A PDF */}
