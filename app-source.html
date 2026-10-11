@@ -573,8 +573,7 @@ setIsParsingSpeech(true);
 setError(null);
 try {
 const client = AiKit.createClient();
-const obrasTextList = obras.map(o => `ID "${o[0]}": "${o[1]}"`).join('
-');
+const obrasTextList = obras.map(o => `ID "${o[0]}": "${o[1]}"`).join('\n');
 const systemPrompt = `
 Eres un experto planificador y estructurador de agendas de obra en España.
 Tu misión es analizar una transcripción de voz (dictado) de Joaquín, Jefe de Obra de ENUE, y extraer actividades y organizarlas por días de la semana y obras.
@@ -615,10 +614,8 @@ messages: [
 const rawContent = response.choices[0]?.message?.content || '';
 // Safe parse JSON
 let cleaned = rawContent
-.replace(/^[\s\S]*?```(?:json)?\s*
-?/i, '')
-.replace(/
-?\s*```[\s\S]*$/, '')
+.replace(/^[\s\S]*?```(?:json)?\s*\n?/i, '')
+.replace(/\n?\s*```[\s\S]*$/, '')
 .trim();
 if (!cleaned) cleaned = rawContent.trim();
 const resultJson = JSON.parse(cleaned);
