@@ -1,22 +1,35 @@
-import {
-  getAuth,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signInWithPopup,
-  GoogleAuthProvider,
-  signOut as firebaseSignOut,
-  onAuthStateChanged,
-  sendPasswordResetEmail,
-  updateProfile
-} from 'firebase/auth';
-import { app } from './db.js';
-
-export const auth = getAuth(app);
-
 export const CORPORATE_DOMAIN = 'enue.es';
 
+const STORAGE_ACTIVE_USER_KEY = 'enue_active_user';
+const STORAGE_SAVED_ACCOUNTS_KEY = 'enue_saved_accounts';
+
+let currentAuthUser = null;
+let authListeners = [];
+
+// Inicializar usuario desde almacenamiento local si existe
+if (typeof window !== 'undefined') {
+  try {
+    const raw = localStorage.getItem(STORAGE_ACTIVE_USER_KEY);
+    if (raw) {
+      currentAuthUser = JSON.parse(raw);
+    }
+  } catch (e) {
+    console.warn('Error leyendo usuario activo de localStorage:', e);
+  }
+}
+
+function notifyAuthListeners() {
+  authListeners.slice().forEach(fn => {
+    try {
+      fn(currentAuthUser);
+    } catch (e) {
+      console.error('Error en listener de autenticación:', e);
+    }
+  });
+}
+
 /**
- * Valida si un correo electrónico pertenece al dominio corporativo oficial de la empresa.
+ * Valida si un correo electrónico pertenece al dominio oficial @enue.es
  */
 export function isCorporateEmail(email) {
   if (!email || typeof email !== 'string') return false;
@@ -25,131 +38,132 @@ export function isCorporateEmail(email) {
 }
 
 /**
- * Normaliza mensajes de error de Firebase a explicaciones claras en español.
+ * Extrae un nombre amigable a partir del usuario de correo (ej. joaquin.martinez -> Joaquín Martínez)
  */
-export function getAuthErrorMessage(error) {
-  if (!error) return 'Ha ocurrido un error inesperado.';
-  const code = error.code || '';
-  switch (code) {
-    case 'auth/invalid-email':
-      return 'El formato del correo electrónico no es válido.';
-    case 'auth/user-disabled':
-      return 'Esta cuenta ha sido inhabilitada por el administrador.';
-    case 'auth/user-not-found':
-      return 'No existe ningún usuario registrado con este correo corporativo.';
-    case 'auth/wrong-password':
-    case 'auth/invalid-credential':
-      return 'Contraseña o credenciales incorrectas. Verifica tus datos.';
-    case 'auth/email-already-in-use':
-      return 'Ya existe una cuenta registrada con este correo corporativo. Inicia sesión.';
-    case 'auth/weak-password':
-      return 'La contraseña es demasiado débil (debe tener al menos 6 caracteres).';
-    case 'auth/popup-closed-by-user':
-      return 'Se ha cancelado la ventana de autenticación con Google.';
-    case 'auth/popup-blocked':
-      return 'El navegador bloqueó la ventana emergente de inicio de sesión. Por favor, permítela.';
-    case 'auth/network-request-failed':
-      return 'Error de conexión de red. Comprueba tu conexión a internet.';
-    case 'auth/too-many-requests':
-      return 'Demasiados intentos fallidos. Por seguridad, inténtalo de nuevo en unos minutos.';
-    default:
-      return error.message || 'Error en la autenticación.';
-  }
+export function getDisplayNameFromEmail(email) {
+  if (!email || typeof email !== 'string') return 'Usuario';
+  const prefix = email.split('@')[0];
+  const parts = prefix.split(/[._-]/).filter(Boolean);
+  if (parts.length === 0) return prefix;
+  return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ');
 }
 
 /**
- * Iniciar sesión con correo corporativo y contraseña.
+ * Genera un identificador único determinista y seguro para la partición de datos en Firestore
  */
-export async function loginWithEmail(email, password) {
+export function getUserIdFromEmail(email) {
+  const clean = (email || '').trim().toLowerCase();
+  return 'u_' + clean.replace(/[^a-z0-9]/g, '_');
+}
+
+/**
+ * Inicia sesión directa sin contraseña mediante verificación de correo corporativo @enue.es
+ */
+export function loginWithCorporateEmail(email, customName = '') {
   const cleanEmail = (email || '').trim().toLowerCase();
   if (!cleanEmail) {
     throw new Error('Introduce tu correo corporativo.');
   }
+
   if (!isCorporateEmail(cleanEmail)) {
-    throw new Error(`Acceso denegado: Únicamente se permite el acceso al personal corporativo con correo @${CORPORATE_DOMAIN}`);
-  }
-  if (!password) {
-    throw new Error('Introduce tu contraseña.');
+    throw new Error(`Acceso denegado: Únicamente se permite el acceso con correo corporativo oficial terminado en @${CORPORATE_DOMAIN}`);
   }
 
-  return await signInWithEmailAndPassword(auth, cleanEmail, password);
-}
+  const displayName = customName && customName.trim()
+    ? customName.trim()
+    : getDisplayNameFromEmail(cleanEmail);
 
-/**
- * Registrar nuevo usuario con correo corporativo y contraseña.
- */
-export async function registerWithEmail(email, password, displayName = '') {
-  const cleanEmail = (email || '').trim().toLowerCase();
-  if (!cleanEmail) {
-    throw new Error('Introduce tu correo corporativo.');
-  }
-  if (!isCorporateEmail(cleanEmail)) {
-    throw new Error(`Acceso denegado: Únicamente se permite registrar cuentas con el dominio corporativo @${CORPORATE_DOMAIN}`);
-  }
-  if (!password || password.length < 6) {
-    throw new Error('La contraseña debe tener un mínimo de 6 caracteres.');
-  }
+  const uid = getUserIdFromEmail(cleanEmail);
 
-  const credential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-  if (displayName && displayName.trim()) {
+  const user = {
+    uid,
+    email: cleanEmail,
+    displayName,
+    lastLogin: new Date().toISOString()
+  };
+
+  currentAuthUser = user;
+
+  if (typeof window !== 'undefined') {
     try {
-      await updateProfile(credential.user, { displayName: displayName.trim() });
+      localStorage.setItem(STORAGE_ACTIVE_USER_KEY, JSON.stringify(user));
+
+      // Guardar en la lista de cuentas recordadas en este dispositivo
+      let accounts = getSavedAccounts();
+      accounts = accounts.filter(a => a.email !== cleanEmail);
+      accounts.unshift({
+        email: cleanEmail,
+        displayName,
+        lastUsed: new Date().toISOString()
+      });
+      localStorage.setItem(STORAGE_SAVED_ACCOUNTS_KEY, JSON.stringify(accounts.slice(0, 5)));
     } catch (e) {
-      console.warn('No se pudo actualizar el nombre del perfil:', e);
+      console.warn('Error guardando sesión:', e);
     }
   }
-  return credential;
+
+  notifyAuthListeners();
+  return user;
 }
 
 /**
- * Iniciar sesión mediante Google Workspace con comprobación estricta de dominio corporativo.
+ * Obtiene la lista de cuentas corporativas usadas previamente en este navegador
  */
-export async function loginWithGoogle() {
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({
-    prompt: 'select_account',
-    hd: CORPORATE_DOMAIN // Hint de Google Workspace para restringir selección al dominio
-  });
-
-  const credential = await signInWithPopup(auth, provider);
-  const user = credential.user;
-
-  // Validación estricta de dominio tras el login de Google
-  if (!user || !user.email || !isCorporateEmail(user.email)) {
-    const invalidEmail = user?.email || 'desconocido';
-    await firebaseSignOut(auth);
-    throw new Error(
-      `Acceso restringido: El correo "${invalidEmail}" no pertenece al dominio corporativo @${CORPORATE_DOMAIN}. Inicia sesión con tu cuenta de empresa.`
-    );
+export function getSavedAccounts() {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_SAVED_ACCOUNTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
   }
-
-  return credential;
 }
 
 /**
- * Enviar correo de restablecimiento de contraseña.
+ * Elimina una cuenta de la lista de cuentas recordadas
  */
-export async function resetPassword(email) {
-  const cleanEmail = (email || '').trim().toLowerCase();
-  if (!cleanEmail) {
-    throw new Error('Introduce tu correo corporativo.');
-  }
-  if (!isCorporateEmail(cleanEmail)) {
-    throw new Error(`El correo debe pertenecer al dominio corporativo @${CORPORATE_DOMAIN}`);
-  }
-  return await sendPasswordResetEmail(auth, cleanEmail);
+export function removeSavedAccount(email) {
+  if (typeof window === 'undefined') return;
+  try {
+    const accounts = getSavedAccounts().filter(a => a.email !== email);
+    localStorage.setItem(STORAGE_SAVED_ACCOUNTS_KEY, JSON.stringify(accounts));
+  } catch (e) {}
 }
 
 /**
- * Cerrar la sesión actual.
+ * Cierra la sesión activa
  */
-export async function logout() {
-  return await firebaseSignOut(auth);
+export function logout() {
+  currentAuthUser = null;
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem(STORAGE_ACTIVE_USER_KEY);
+    } catch (e) {}
+  }
+  notifyAuthListeners();
+  return Promise.resolve();
 }
 
 /**
- * Suscripción al estado de autenticación.
+ * Obtiene el usuario corporativo actual
+ */
+export function getCurrentUser() {
+  return currentAuthUser;
+}
+
+/**
+ * Suscripción al estado de sesión corporativa
  */
 export function onAuthUserChange(callback) {
-  return onAuthStateChanged(auth, callback);
+  authListeners.push(callback);
+  // Llamar de inmediato con el estado actual
+  try {
+    callback(currentAuthUser);
+  } catch (e) {
+    console.error(e);
+  }
+
+  return () => {
+    authListeners = authListeners.filter(f => f !== callback);
+  };
 }

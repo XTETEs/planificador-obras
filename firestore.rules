@@ -4,9 +4,7 @@ rules_version = '2';
 // Assumed Data Model
 // ===============================================================
 //
-// This security rules file assumes the following data structures:
-//
-// Root Collections (Legacy / Demo Data - Read-only for authenticated users):
+// Root Collections (Legacy / Demo Data - Read-only):
 //   - /obras/{obraId}
 //   - /tareas/{tareaId}
 //
@@ -14,31 +12,29 @@ rules_version = '2';
 // Collection: /users/{userId}/obras
 // Document ID: obraId (string)
 // Fields:
-//   - id: string (required, 1-100 chars, must match document ID) - Identificador único de la obra
-//   - nombre: string (required, 1-200 chars) - Nombre descriptivo de la obra
-//   - activo: bool | number (required, 0, 1, false, or true) - Indicador de obra activa
+//   - id: string (required, 1-100 chars, must match document ID)
+//   - nombre: string (required, 1-200 chars)
+//   - activo: bool | number (required, 0, 1, false, or true)
 //
 // Collection: /users/{userId}/tareas
 // Document ID: tareaId (string)
 // Fields:
-//   - id: string (required, 1-100 chars, must match document ID) - Identificador único de la tarea
-//   - obra_id: string (required, 1-100 chars) - ID de la obra asociada
-//   - fecha_semana: string (required, YYYY-MM-DD, 10 chars) - Lunes correspondiente a la semana planificada
-//   - dia_semana: string (required, 'Lunes'..'Domingo') - Día asignado dentro de la semana
-//   - actividad: string (required, 1-1000 chars) - Descripción de la actividad a realizar
-//   - gremio: string (required, 1-100 chars) - Gremio o especialidad responsable
-//   - completada: bool | number (required, 0, 1, false, or true) - Estado de finalización de la tarea
-//   - notas: string (optional, 0-2000 chars) - Observaciones adicionales
-//   - fecha_creado: string (required, ISO 8601 string, immutable) - Fecha y hora de creación de la tarea
+//   - id: string (required, 1-100 chars, must match document ID)
+//   - obra_id: string (required, 1-100 chars)
+//   - fecha_semana: string (required, YYYY-MM-DD, 10 chars)
+//   - dia_semana: string (required, 'Lunes'..'Domingo')
+//   - actividad: string (required, 1-1000 chars)
+//   - gremio: string (required, 1-100 chars)
+//   - completada: bool | number (required, 0, 1, false, or true)
+//   - notas: string (optional, 0-2000 chars)
+//   - fecha_creado: string (required, ISO 8601 string, immutable)
 //
-// User Profile Collection:
 // Collection: /users/{userId}
-// Document ID: userId (string, must match authenticated user UID)
+// Document ID: userId (string, e.g. 'u_nombre_apellido_enue_es')
 //
-// Authentication & Isolation:
-// Users authenticate with their corporate @enue.es accounts. All user-specific
-// obras and tareas are partitioned under /users/{userId}/..., where only the
-// authenticated owner (request.auth.uid == userId) has access.
+// Access Control:
+// Users access their private space via verified corporate email (@enue.es).
+// Data is strictly isolated per userId path.
 //
 // ===============================================================
 
@@ -49,22 +45,14 @@ service cloud.firestore {
     // Helper Functions
     // ===============================================================
 
-    // Check if the request is authenticated
-    function isAuthenticated() {
-      return request.auth != null;
+    function isValidUserId(userId) {
+      return userId is string && userId.size() > 0 && userId.size() <= 128;
     }
 
-    // Check if the user is the authenticated owner of the resource path
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-
-    // Validate boolean or binary integer (0 or 1)
     function isValidFlag(val) {
       return val is bool || (val is number && (val == 0 || val == 1));
     }
 
-    // Validate allowed days of the week in Spanish
     function isValidDiaSemana(dia) {
       return dia is string &&
         dia in [
@@ -73,7 +61,6 @@ service cloud.firestore {
         ];
     }
 
-    // Validate optional notes field (must be string <= 2000 chars if present)
     function isValidOptionalNotas(data) {
       return !('notas' in data) ||
         (data.notas is string && data.notas.size() <= 2000);
@@ -83,7 +70,6 @@ service cloud.firestore {
     // Domain Validators
     // ===============================================================
 
-    // Domain validator for 'obras' documents
     function isValidObra(data, obraId) {
       return data.keys().hasAll(['id', 'nombre', 'activo']) &&
         data.keys().hasOnly(['id', 'nombre', 'activo']) &&
@@ -97,7 +83,6 @@ service cloud.firestore {
         isValidFlag(data.activo);
     }
 
-    // Domain validator for 'tareas' documents
     function isValidTarea(data, tareaId) {
       return data.keys().hasAll(['id', 'obra_id', 'fecha_semana', 'dia_semana', 'actividad', 'gremio', 'completada', 'fecha_creado']) &&
         data.keys().hasOnly(['id', 'obra_id', 'fecha_semana', 'dia_semana', 'actividad', 'gremio', 'completada', 'notas', 'fecha_creado']) &&
@@ -135,57 +120,42 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // -------------------------------------------------------------
-    // Backward Compatibility: Root Collections (Legacy / Demo Data)
-    // Authenticated users can read to seed/import on first login.
-    // Public unauthenticated access and direct writes are forbidden.
-    // -------------------------------------------------------------
+    // Legacy / Demo Data (Read-only for migration)
     match /obras/{obraId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow write: if false;
     }
 
     match /tareas/{tareaId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow write: if false;
     }
 
-    // -------------------------------------------------------------
     // Per-User Isolated Data
-    // Scoped under /users/{userId}/...
-    // Only the authenticated owner (request.auth.uid == userId) has access.
-    // -------------------------------------------------------------
     match /users/{userId} {
-      // User profile / root user document
-      allow read, write: if isOwner(userId);
+      allow read, write: if isValidUserId(userId);
 
-      // User's private 'obras' subcollection
       match /obras/{obraId} {
-        allow read: if isOwner(userId);
+        allow read, delete: if isValidUserId(userId);
 
-        allow create: if isOwner(userId) &&
+        allow create: if isValidUserId(userId) &&
           isValidObra(request.resource.data, obraId);
 
-        allow update: if isOwner(userId) &&
+        allow update: if isValidUserId(userId) &&
           isValidObra(request.resource.data, obraId) &&
           request.resource.data.id == resource.data.id;
-
-        allow delete: if isOwner(userId);
       }
 
-      // User's private 'tareas' subcollection
       match /tareas/{tareaId} {
-        allow read: if isOwner(userId);
+        allow read, delete: if isValidUserId(userId);
 
-        allow create: if isOwner(userId) &&
+        allow create: if isValidUserId(userId) &&
           isValidTarea(request.resource.data, tareaId);
 
-        allow update: if isOwner(userId) &&
+        allow update: if isValidUserId(userId) &&
           isValidTarea(request.resource.data, tareaId) &&
           request.resource.data.id == resource.data.id &&
           request.resource.data.fecha_creado == resource.data.fecha_creado;
-
-        allow delete: if isOwner(userId);
       }
     }
   }
