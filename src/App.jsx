@@ -222,6 +222,9 @@ const serializeTaskNotas = (userNotas, aplazamientos = []) => {
   return cleanUserNotas ? `${cleanUserNotas}\n\n${serializedHistory}` : serializedHistory;
 };
 
+// Variable síncrona en memoria para asegurar la persistencia del objeto arrastrado en HTML5 DnD
+let currentDraggedTask = null;
+
 function App() {
 const [db] = useState(() => AiKit.db(DB_ID, { live: true }));
 // State
@@ -1081,48 +1084,65 @@ const reportData = useMemo(() => {
 
 // HTML5 drag-and-drop entre días
 const handleDragStart = (e, task) => {
-e.stopPropagation();
-try {
-e.dataTransfer.setData('text/plain', String(task.id));
-e.dataTransfer.effectAllowed = 'move';
-} catch (err) {
-console.warn('No se pudo establecer el dato de arrastre', err);
-}
-setDraggedTask(task);
+  e.stopPropagation();
+  currentDraggedTask = task;
+  try {
+    if (typeof window !== 'undefined') {
+      window.__currentDraggedTask = task;
+    }
+  } catch (err) {}
+  try {
+    e.dataTransfer.setData('text/plain', String(task.id));
+    e.dataTransfer.setData('application/json', JSON.stringify({ id: task.id, actividad: task.actividad }));
+    e.dataTransfer.effectAllowed = 'move';
+  } catch (err) {
+    console.warn('No se pudo establecer el dato de arrastre', err);
+  }
+  setDraggedTask(task);
 };
+
 const handleDragOverDay = (e, day) => {
-e.preventDefault();
-setDragOverDay(day);
+  e.preventDefault();
+  e.stopPropagation();
+  try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
+  if (dragOverDay !== day) {
+    setDragOverDay(day);
+  }
 };
+
 const handleDragLeaveDay = (e, day) => {
-if (!e.currentTarget.contains(e.relatedTarget)) {
-setDragOverDay(null);
-}
+  if (!e.currentTarget.contains(e.relatedTarget)) {
+    setDragOverDay(null);
+  }
 };
+
 const handleDropOnDay = (e, targetDay) => {
-e.preventDefault();
-e.stopPropagation();
-const draggedTaskId = draggedTask?.id || e.dataTransfer.getData('text/plain');
-const sourceTask = draggedTask || todasLasTareas.find(task => String(task.id) === String(draggedTaskId));
-setDragOverDay(null);
-if (!sourceTask) {
-setDraggedTask(null);
-return;
-}
-if (sourceTask.dia_semana === targetDay && sourceTask.fecha_semana === currentWeekMonday) {
-setDraggedTask(null);
-return;
-}
-setDraggedTask(null);
-// Al mover de día, se pregunta el motivo para registrar la no ejecución / reprogramación
-handleOpenPostponeModal(sourceTask, currentWeekMonday, targetDay, sourceTask.obra_id);
+  e.preventDefault();
+  e.stopPropagation();
+  setDragOverDay(null);
+  const draggedTaskId = currentDraggedTask?.id || (typeof window !== 'undefined' && window.__currentDraggedTask?.id) || draggedTask?.id || e.dataTransfer.getData('text/plain');
+  const sourceTask = currentDraggedTask || (typeof window !== 'undefined' && window.__currentDraggedTask) || draggedTask || todasLasTareas.find(task => String(task.id) === String(draggedTaskId));
+
+  currentDraggedTask = null;
+  try { if (typeof window !== 'undefined') window.__currentDraggedTask = null; } catch (err) {}
+  setDraggedTask(null);
+
+  if (!sourceTask) return;
+  if (sourceTask.dia_semana === targetDay && sourceTask.fecha_semana === currentWeekMonday) {
+    return;
+  }
+  // Al mover de día, se pregunta el motivo para registrar la no ejecución / reprogramación
+  handleOpenPostponeModal(sourceTask, currentWeekMonday, targetDay, sourceTask.obra_id);
 };
 
 // Drag & drop para Cuadrante Mensual: Matriz por Obras
 const handleDragOverMonthlyCell = (e, cellKey) => {
   e.preventDefault();
+  e.stopPropagation();
   try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
-  setDragOverCell(cellKey);
+  if (dragOverCell !== cellKey) {
+    setDragOverCell(cellKey);
+  }
 };
 
 const handleDragLeaveMonthlyCell = (e) => {
@@ -1135,18 +1155,18 @@ const handleDropOnMonthlyMatrixCell = (e, targetObraId, targetDateStr) => {
   e.preventDefault();
   e.stopPropagation();
   setDragOverCell(null);
-  const draggedTaskId = draggedTask?.id || e.dataTransfer.getData('text/plain');
-  const sourceTask = draggedTask || todasLasTareas.find(task => String(task.id) === String(draggedTaskId));
-  if (!sourceTask) {
-    setDraggedTask(null);
-    return;
-  }
+  const draggedTaskId = currentDraggedTask?.id || (typeof window !== 'undefined' && window.__currentDraggedTask?.id) || draggedTask?.id || e.dataTransfer.getData('text/plain');
+  const sourceTask = currentDraggedTask || (typeof window !== 'undefined' && window.__currentDraggedTask) || draggedTask || todasLasTareas.find(task => String(task.id) === String(draggedTaskId));
+
+  currentDraggedTask = null;
+  try { if (typeof window !== 'undefined') window.__currentDraggedTask = null; } catch (err) {}
+  setDraggedTask(null);
+
+  if (!sourceTask) return;
   const sourceExactDate = getTaskExactDate(sourceTask);
   if (sourceExactDate === targetDateStr && sourceTask.obra_id === targetObraId) {
-    setDraggedTask(null);
     return;
   }
-  setDraggedTask(null);
   const { targetMonday, targetDay } = getDateDetails(targetDateStr);
   // Preguntar motivo y abrir modal preconfigurado
   handleOpenPostponeModal(sourceTask, targetMonday, targetDay, targetObraId);
@@ -1155,8 +1175,11 @@ const handleDropOnMonthlyMatrixCell = (e, targetObraId, targetDateStr) => {
 // Drag & drop para Cuadrícula Calendario Mensual
 const handleDragOverCalendarDate = (e, dateStr) => {
   e.preventDefault();
+  e.stopPropagation();
   try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
-  setDragOverCalendarDate(dateStr);
+  if (dragOverCalendarDate !== dateStr) {
+    setDragOverCalendarDate(dateStr);
+  }
 };
 
 const handleDragLeaveCalendarDate = (e) => {
@@ -1169,18 +1192,18 @@ const handleDropOnCalendarDate = (e, targetDateStr) => {
   e.preventDefault();
   e.stopPropagation();
   setDragOverCalendarDate(null);
-  const draggedTaskId = draggedTask?.id || e.dataTransfer.getData('text/plain');
-  const sourceTask = draggedTask || todasLasTareas.find(task => String(task.id) === String(draggedTaskId));
-  if (!sourceTask) {
-    setDraggedTask(null);
-    return;
-  }
+  const draggedTaskId = currentDraggedTask?.id || (typeof window !== 'undefined' && window.__currentDraggedTask?.id) || draggedTask?.id || e.dataTransfer.getData('text/plain');
+  const sourceTask = currentDraggedTask || (typeof window !== 'undefined' && window.__currentDraggedTask) || draggedTask || todasLasTareas.find(task => String(task.id) === String(draggedTaskId));
+
+  currentDraggedTask = null;
+  try { if (typeof window !== 'undefined') window.__currentDraggedTask = null; } catch (err) {}
+  setDraggedTask(null);
+
+  if (!sourceTask) return;
   const sourceExactDate = getTaskExactDate(sourceTask);
   if (sourceExactDate === targetDateStr) {
-    setDraggedTask(null);
     return;
   }
-  setDraggedTask(null);
   const { targetMonday, targetDay } = getDateDetails(targetDateStr);
   // Preguntar motivo y abrir modal preconfigurado
   handleOpenPostponeModal(sourceTask, targetMonday, targetDay, sourceTask.obra_id);
@@ -2069,6 +2092,11 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                         return (
                           <td
                             key={day.dateStr}
+                            onDragEnter={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (dragOverCell !== cellKey) setDragOverCell(cellKey);
+                            }}
                             onDragOver={(e) => handleDragOverMonthlyCell(e, cellKey)}
                             onDragLeave={handleDragLeaveMonthlyCell}
                             onDrop={(e) => handleDropOnMonthlyMatrixCell(e, obraId, day.dateStr)}
@@ -2080,7 +2108,21 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                 : 'bg-white'
                             } ${isToday && !isDraggedOver ? 'bg-amber-50/30' : ''}`}
                           >
-                            <div className="space-y-1.5 min-h-[70px]">
+                            <div 
+                              className="space-y-1.5 min-h-[70px]"
+                              onDragOver={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
+                              }}
+                            >
+                              {/* Indicador visual al arrastrar sobre esta celda */}
+                              {isDraggedOver && (
+                                <div className="py-2 px-1 text-center bg-amber-200/95 border-2 border-dashed border-amber-600 rounded-lg text-[10px] font-black text-amber-950 animate-pulse pointer-events-none mb-1 shadow-xs">
+                                  ↓ Soltar aquí ({day.dayNum} {MESES[monthViewDate.getMonth()].slice(0, 3)})
+                                </div>
+                              )}
+
                               {cellTasks.map((task) => {
                                 const { userNotas: cleanNotas, aplazamientos: taskAplazamientos } = parseTaskNotas(task.notas);
                                 return (
@@ -2088,8 +2130,13 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                   key={task.id}
                                   draggable={true}
                                   onDragStart={(e) => handleDragStart(e, task)}
-                                  onDragEnd={() => { setDraggedTask(null); setDragOverCell(null); }}
-                                  className={`p-2 rounded-lg border text-left transition-all shadow-2xs group/card relative cursor-grab active:cursor-grabbing ${
+                                  onDragEnd={() => {
+                                    currentDraggedTask = null;
+                                    try { if (typeof window !== 'undefined') window.__currentDraggedTask = null; } catch (err) {}
+                                    setDraggedTask(null);
+                                    setDragOverCell(null);
+                                  }}
+                                  className={`p-2 rounded-lg border text-left transition-all shadow-2xs group/card relative cursor-grab active:cursor-grabbing select-none ${
                                     task.completada
                                       ? 'bg-slate-50 border-slate-200 text-slate-400'
                                       : 'bg-white border-slate-200 hover:border-amber-400 hover:shadow-xs'
@@ -2098,64 +2145,76 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                   {/* Cabecera de la mini tarjeta: Gremio, Grip y Checkbox */}
                                   <div className="flex items-center justify-between gap-1 mb-1">
                                     <div className="flex items-center gap-1 min-w-0">
-                                      <GripVertical className="w-3 h-3 text-slate-300 group-hover/card:text-amber-500 shrink-0" />
-                                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider truncate ${getGremioTagClasses(task.gremio, task.completada)}`}>
+                                      <span 
+                                        className="p-0.5 rounded bg-slate-100 group-hover/card:bg-amber-100 text-slate-400 group-hover/card:text-amber-600 transition-colors shrink-0"
+                                        title="Arrastra para mover a otro día u otra obra"
+                                      >
+                                        <GripVertical className="w-3.5 h-3.5" />
+                                      </span>
+                                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider truncate select-none ${getGremioTagClasses(task.gremio, task.completada)}`}>
                                         {task.gremio}
                                       </span>
                                     </div>
-                                    <button
-                                      type="button"
-                                      onPointerDown={(e) => e.stopPropagation()}
-                                      onClick={() => handleToggleComplete(task)}
-                                      title={task.completada ? 'Marcar pendiente' : 'Marcar completada'}
-                                      className="cursor-pointer shrink-0"
+                                    <div 
+                                      className="flex items-center gap-0.5 shrink-0" 
+                                      onPointerDown={(e) => e.stopPropagation()} 
+                                      onMouseDown={(e) => e.stopPropagation()}
                                     >
-                                      {task.completada ? (
-                                        <CheckSquare className="w-4 h-4 text-emerald-600" />
-                                      ) : (
-                                        <Square className="w-4 h-4 text-slate-300 hover:text-amber-500" />
-                                      )}
-                                    </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleComplete(task)}
+                                        title={task.completada ? 'Marcar pendiente' : 'Marcar completada'}
+                                        className="cursor-pointer shrink-0 p-0.5"
+                                      >
+                                        {task.completada ? (
+                                          <CheckSquare className="w-4 h-4 text-emerald-600" />
+                                        ) : (
+                                          <Square className="w-4 h-4 text-slate-300 hover:text-amber-500" />
+                                        )}
+                                      </button>
+                                    </div>
                                   </div>
 
                                   {/* Actividad */}
-                                  <p className={`font-semibold text-xs leading-snug line-clamp-2 ${task.completada ? 'line-through text-slate-400' : 'text-slate-800'}`}>
+                                  <p className={`font-semibold text-xs leading-snug line-clamp-2 select-none pointer-events-none ${task.completada ? 'line-through text-slate-400' : 'text-slate-800'}`}>
                                     {task.actividad}
                                   </p>
 
                                   {/* Badge de aplazamientos */}
                                   {taskAplazamientos.length > 0 && (
-                                    <button
-                                      type="button"
-                                      onPointerDown={(e) => e.stopPropagation()}
-                                      onClick={() => setSelectedTaskHistory({ task, aplazamientos: taskAplazamientos })}
-                                      className="mt-1 inline-flex items-center gap-1 text-[8px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 cursor-pointer"
-                                      title={`No ejecutada en ${taskAplazamientos.length} ocasión(es). Clic para ver historial.`}
-                                    >
-                                      <AlertTriangle className="w-2.5 h-2.5 text-amber-600" />
-                                      <span>No ejecutada ({taskAplazamientos.length})</span>
-                                    </button>
+                                    <div onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedTaskHistory({ task, aplazamientos: taskAplazamientos })}
+                                        className="mt-1 inline-flex items-center gap-1 text-[8px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 cursor-pointer"
+                                        title={`No ejecutada en ${taskAplazamientos.length} ocasión(es). Clic para ver historial.`}
+                                      >
+                                        <AlertTriangle className="w-2.5 h-2.5 text-amber-600" />
+                                        <span>No ejecutada ({taskAplazamientos.length})</span>
+                                      </button>
+                                    </div>
                                   )}
 
                                   {/* Notas limpias si existen */}
                                   {cleanNotas && (
-                                    <p className="text-[10px] text-slate-500 italic mt-1 line-clamp-1" title={cleanNotas}>
+                                    <p className="text-[10px] text-slate-500 italic mt-1 line-clamp-1 select-none pointer-events-none" title={cleanNotas}>
                                       💡 {cleanNotas}
                                     </p>
                                   )}
 
-                                  {/* Botones flotantes para posponer y editar */}
+                                  {/* Botones flotantes para posponer/trasladar y editar */}
                                   <div 
-                                    className="absolute bottom-1 right-1 opacity-0 group-hover/card:opacity-100 flex items-center gap-1 bg-white/95 rounded shadow-xs p-0.5 transition-opacity"
+                                    className="absolute bottom-1 right-1 opacity-0 group-hover/card:opacity-100 flex items-center gap-0.5 bg-white/95 rounded shadow-xs p-0.5 transition-opacity"
                                     onPointerDown={(e) => e.stopPropagation()}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                   >
                                     <button
                                       type="button"
                                       onClick={() => handleOpenPostponeModal(task)}
-                                      title="No ejecutada / Trasladar"
+                                      title="Mover de día / No ejecutada"
                                       className="p-1 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded cursor-pointer"
                                     >
-                                      <AlertTriangle className="w-3 h-3" />
+                                      <ArrowRightLeft className="w-3 h-3" />
                                     </button>
                                     <button
                                       type="button"
@@ -2269,10 +2328,15 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
               return (
                 <div
                   key={cell.dateStr}
+                  onDragEnter={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (dragOverCalendarDate !== cell.dateStr) setDragOverCalendarDate(cell.dateStr);
+                  }}
                   onDragOver={(e) => handleDragOverCalendarDate(e, cell.dateStr)}
                   onDragLeave={handleDragLeaveCalendarDate}
                   onDrop={(e) => handleDropOnCalendarDate(e, cell.dateStr)}
-                  className={`min-h-[140px] rounded-xl border p-2 flex flex-col justify-between transition-all ${
+                  className={`min-h-[140px] rounded-xl border p-2 flex flex-col justify-between transition-all relative ${
                     isDraggedOver
                       ? 'bg-amber-100/90 ring-2 ring-amber-500 ring-inset shadow-inner'
                       : !cell.isCurrentMonth
@@ -2282,7 +2346,14 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                       : 'bg-white border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  <div>
+                  <div
+                    className="space-y-2"
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
+                    }}
+                  >
                     {/* Cabecera del día */}
                     <div className="flex items-center justify-between mb-1.5">
                       <span className={`text-sm font-black ${
@@ -2302,6 +2373,13 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                       )}
                     </div>
 
+                    {/* Indicador visual al arrastrar sobre este día */}
+                    {isDraggedOver && (
+                      <div className="py-2 px-1 text-center bg-amber-200/95 border-2 border-dashed border-amber-600 rounded-lg text-[10px] font-black text-amber-950 animate-pulse my-1 pointer-events-none shadow-xs">
+                        ↓ Soltar aquí ({cell.dayNum} {MESES[cell.dateObj.getMonth()].slice(0, 3)})
+                      </div>
+                    )}
+
                     {/* Tareas agrupadas por obra */}
                     <div className="space-y-2">
                       {Object.keys(tasksByObraInCell).map((obraId) => {
@@ -2312,7 +2390,7 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                         return (
                           <div key={obraId} className="space-y-1">
                             {/* Etiqueta de la obra */}
-                            <div className="flex items-center gap-1 text-[10px] font-extrabold truncate" style={{ color: oColor.text }}>
+                            <div className="flex items-center gap-1 text-[10px] font-extrabold truncate select-none" style={{ color: oColor.text }}>
                               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: oColor.border }} />
                               <span className="truncate">{oName}</span>
                             </div>
@@ -2325,8 +2403,13 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                 key={task.id}
                                 draggable={true}
                                 onDragStart={(e) => handleDragStart(e, task)}
-                                onDragEnd={() => { setDraggedTask(null); setDragOverCalendarDate(null); }}
-                                className={`p-1.5 rounded-md border text-left text-xs group/card relative cursor-grab active:cursor-grabbing ${
+                                onDragEnd={() => {
+                                  currentDraggedTask = null;
+                                  try { if (typeof window !== 'undefined') window.__currentDraggedTask = null; } catch (err) {}
+                                  setDraggedTask(null);
+                                  setDragOverCalendarDate(null);
+                                }}
+                                className={`p-1.5 rounded-md border text-left text-xs group/card relative cursor-grab active:cursor-grabbing select-none ${
                                   task.completada
                                     ? 'bg-slate-50 border-slate-200 text-slate-400 line-through'
                                     : 'bg-white border-slate-200 hover:border-amber-300 shadow-2xs'
@@ -2334,24 +2417,33 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                               >
                                 <div className="flex items-center justify-between gap-1">
                                   <div className="flex items-center gap-1 min-w-0">
-                                    <GripVertical className="w-2.5 h-2.5 text-slate-300 group-hover/card:text-amber-500 shrink-0" />
-                                    <span className={`text-[8px] font-bold px-1 rounded uppercase truncate ${getGremioTagClasses(task.gremio, task.completada)}`}>
+                                    <span 
+                                      className="p-0.5 rounded bg-slate-100 group-hover/card:bg-amber-100 text-slate-400 group-hover/card:text-amber-600 transition-colors shrink-0"
+                                      title="Arrastra para mover a otro día"
+                                    >
+                                      <GripVertical className="w-3 h-3" />
+                                    </span>
+                                    <span className={`text-[8px] font-bold px-1 rounded uppercase truncate select-none ${getGremioTagClasses(task.gremio, task.completada)}`}>
                                       {task.gremio}
                                     </span>
                                   </div>
-                                  <div className="flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
+                                  <div 
+                                    className="flex items-center gap-0.5 shrink-0" 
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                  >
                                     <button
                                       type="button"
                                       onClick={() => handleOpenPostponeModal(task)}
-                                      title="No ejecutada / Trasladar"
-                                      className="cursor-pointer text-slate-400 hover:text-amber-600 transition-colors"
+                                      title="Mover de día / No ejecutada"
+                                      className="cursor-pointer text-slate-400 hover:text-amber-600 transition-colors p-0.5"
                                     >
-                                      <AlertTriangle className="w-3 h-3" />
+                                      <ArrowRightLeft className="w-3 h-3" />
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => handleToggleComplete(task)}
-                                      className="cursor-pointer shrink-0"
+                                      className="cursor-pointer shrink-0 p-0.5"
                                     >
                                       {task.completada ? (
                                         <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
@@ -2361,20 +2453,21 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                     </button>
                                   </div>
                                 </div>
-                                <p className="font-semibold text-[11px] mt-0.5 line-clamp-2 leading-tight">
+                                <p className="font-semibold text-[11px] mt-0.5 line-clamp-2 leading-tight select-none pointer-events-none">
                                   {task.actividad}
                                 </p>
                                 {taskAplazamientos.length > 0 && (
-                                  <button
-                                    type="button"
-                                    onPointerDown={(e) => e.stopPropagation()}
-                                    onClick={() => setSelectedTaskHistory({ task, aplazamientos: taskAplazamientos })}
-                                    className="mt-1 inline-flex items-center gap-0.5 text-[8px] font-bold px-1 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 cursor-pointer"
-                                    title={`No ejecutada en ${taskAplazamientos.length} ocasión(es)`}
-                                  >
-                                    <AlertTriangle className="w-2.5 h-2.5 text-amber-600" />
-                                    <span>No ejecutada ({taskAplazamientos.length})</span>
-                                  </button>
+                                  <div onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedTaskHistory({ task, aplazamientos: taskAplazamientos })}
+                                      className="mt-1 inline-flex items-center gap-0.5 text-[8px] font-bold px-1 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 cursor-pointer"
+                                      title={`No ejecutada en ${taskAplazamientos.length} ocasión(es)`}
+                                    >
+                                      <AlertTriangle className="w-2.5 h-2.5 text-amber-600" />
+                                      <span>No ejecutada ({taskAplazamientos.length})</span>
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                               );
@@ -2862,6 +2955,13 @@ Guardar Cambios
                 </select>
               </div>
             </div>
+
+            {postponeTargetObraId && postponeTargetObraId !== postponeTask.obra_id && (
+              <div className="text-xs text-amber-900 bg-amber-100/80 p-2 rounded-lg border border-amber-300 font-semibold flex items-center gap-1.5">
+                <Building className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                <span>Obra de destino: <strong className="text-slate-950">{obras.find(o => o[0] === postponeTargetObraId)?.[1] || 'Obra Seleccionada'}</strong></span>
+              </div>
+            )}
 
             <div className="text-xs text-amber-900 bg-white/80 p-2 rounded-lg border border-amber-200/60 font-medium flex items-center gap-1.5">
               <ArrowRight className="w-3.5 h-3.5 text-amber-600 shrink-0" />
