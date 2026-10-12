@@ -36,7 +36,8 @@ AlertTriangle,
 FileSpreadsheet,
 History,
 CalendarRange,
-ArrowRight
+ArrowRight,
+Tag
 } from 'lucide-react';
 import { migrateLocalDataToFirestore } from './services/db.js';
 // EMBEDDED DATABASES ID
@@ -180,17 +181,17 @@ const getDateDetails = (dateStr) => {
   return { targetMonday, targetDay, d };
 };
 
-const MOTIVOS_NO_EJECUCION = [
-  'Falta de material / Suministros',
-  'Subcontrata / Gremio no comparece',
-  'Condiciones climáticas adversas / Lluvia',
-  'Retraso en fase o gremio predecesor',
-  'Modificación de proyecto / Instrucción de Dirección',
-  'Incidencia de seguridad / Falta de protecciones',
-  'Falta de permisos / Acceso a zona de trabajo',
-  'Prioridad cambiada a otra zona u obra',
-  'Otro motivo'
+const DEFAULT_INCIDENT_TAGS = [
+  'Falta de material',
+  'Subcontrata no comparece',
+  'Lluvia / Clima adverso',
+  'Retraso gremio predecesor',
+  'Modificación de proyecto',
+  'Incidencia de seguridad',
+  'Falta de permisos',
+  'Prioridad cambiada'
 ];
+const MOTIVOS_NO_EJECUCION = DEFAULT_INCIDENT_TAGS;
 
 // Parser y Serializador para el Historial de Incidencias / Aplazamientos dentro de task.notas
 const parseTaskNotas = (rawNotas) => {
@@ -286,8 +287,16 @@ const [openTaskMenuId, setOpenTaskMenuId] = useState(null);
 // State for Postponing / Incident Registration (No ejecutada)
 const [isPostponeModalOpen, setIsPostponeModalOpen] = useState(false);
 const [postponeTask, setPostponeTask] = useState(null);
-const [postponeMotivo, setPostponeMotivo] = useState(MOTIVOS_NO_EJECUCION[0]);
-const [postponeDetalle, setPostponeDetalle] = useState('');
+const [postponeObservaciones, setPostponeObservaciones] = useState('');
+const [postponeSelectedTags, setPostponeSelectedTags] = useState([]);
+const [postponeCustomTagInput, setPostponeCustomTagInput] = useState('');
+const [customTagsPool, setCustomTagsPool] = useState(() => {
+  try {
+    const saved = localStorage.getItem('planificador_custom_tags');
+    if (saved) return JSON.parse(saved);
+  } catch (e) {}
+  return [];
+});
 const [postponeTargetWeek, setPostponeTargetWeek] = useState(currentWeekMonday);
 const [postponeTargetDay, setPostponeTargetDay] = useState('Lunes');
 const [postponeTargetObraId, setPostponeTargetObraId] = useState(null);
@@ -861,11 +870,61 @@ setError('Error al copiar actividad: ' + err.message);
 }
 };
 
+// Todas las etiquetas disponibles (predefinidas + añadidas por el usuario + existentes en tareas)
+const allAvailableTags = useMemo(() => {
+  const set = new Set(DEFAULT_INCIDENT_TAGS);
+  customTagsPool.forEach(t => {
+    if (t && typeof t === 'string' && t.trim()) set.add(t.trim());
+  });
+  todasLasTareas.forEach(task => {
+    const { aplazamientos } = parseTaskNotas(task.notas);
+    aplazamientos.forEach(apl => {
+      if (Array.isArray(apl.tags)) {
+        apl.tags.forEach(t => { if (t && typeof t === 'string' && t.trim()) set.add(t.trim()); });
+      } else if (apl.motivo && typeof apl.motivo === 'string') {
+        apl.motivo.split(',').forEach(part => {
+          const trimmed = part.trim();
+          if (trimmed) set.add(trimmed);
+        });
+      }
+    });
+  });
+  return Array.from(set);
+}, [customTagsPool, todasLasTareas]);
+
+const handleToggleTag = (tag) => {
+  setPostponeSelectedTags(prev => {
+    if (prev.includes(tag)) {
+      return prev.filter(t => t !== tag);
+    } else {
+      return [...prev, tag];
+    }
+  });
+};
+
+const handleAddNewTag = (e) => {
+  if (e) e.preventDefault();
+  const trimmed = postponeCustomTagInput.trim();
+  if (!trimmed) return;
+  if (!postponeSelectedTags.includes(trimmed)) {
+    setPostponeSelectedTags(prev => [...prev, trimmed]);
+  }
+  if (!customTagsPool.includes(trimmed)) {
+    const updated = [...customTagsPool, trimmed];
+    setCustomTagsPool(updated);
+    try {
+      localStorage.setItem('planificador_custom_tags', JSON.stringify(updated));
+    } catch (err) {}
+  }
+  setPostponeCustomTagInput('');
+};
+
 // Open Postpone / Non-execution Modal for a task
 const handleOpenPostponeModal = (task, targetWeek = null, targetDay = null, targetObraId = null) => {
   setPostponeTask(task);
-  setPostponeMotivo(MOTIVOS_NO_EJECUCION[0]);
-  setPostponeDetalle('');
+  setPostponeSelectedTags([]);
+  setPostponeCustomTagInput('');
+  setPostponeObservaciones('');
   if (targetWeek && targetDay) {
     setPostponeTargetWeek(targetWeek);
     setPostponeTargetDay(targetDay);
@@ -886,8 +945,10 @@ const handleOpenPostponeModal = (task, targetWeek = null, targetDay = null, targ
 const handleConfirmPostpone = async (e) => {
   if (e) e.preventDefault();
   if (!postponeTask) return;
-  if (!postponeMotivo.trim()) {
-    setError('Por favor, selecciona o indica el motivo de no ejecución.');
+
+  const obsTrimmed = postponeObservaciones.trim();
+  if (!obsTrimmed && postponeSelectedTags.length === 0) {
+    setError('Por favor, escribe una breve observación o selecciona al menos una etiqueta para clasificar la incidencia.');
     return;
   }
 
@@ -900,14 +961,21 @@ const handleConfirmPostpone = async (e) => {
   const targetDateObj = new Date(mParts[0], mParts[1] - 1, mParts[2] + dayOffset, 12);
   const targetExactDate = `${targetDateObj.getFullYear()}-${String(targetDateObj.getMonth() + 1).padStart(2, '0')}-${String(targetDateObj.getDate()).padStart(2, '0')}`;
 
+  const finalTags = postponeSelectedTags.length > 0
+    ? postponeSelectedTags
+    : (obsTrimmed ? [obsTrimmed.slice(0, 30)] : ['General']);
+
+  const primaryMotivo = finalTags.join(', ');
+
   const newIncident = {
     id: 'apl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     fecha_anterior: currentExactDate,
     dia_anterior: postponeTask.dia_semana,
     fecha_nueva: targetExactDate,
     dia_nuevo: postponeTargetDay,
-    motivo: postponeMotivo.trim(),
-    detalle: (postponeDetalle || '').trim(),
+    tags: finalTags,
+    motivo: primaryMotivo,
+    detalle: obsTrimmed,
     fecha_registro: new Date().toISOString()
   };
 
@@ -950,8 +1018,9 @@ const handleConfirmPostpone = async (e) => {
     setIsPostponeModalOpen(false);
     setPostponeTask(null);
     setPostponeTargetObraId(null);
-    setPostponeMotivo(MOTIVOS_NO_EJECUCION[0]);
-    setPostponeDetalle('');
+    setPostponeSelectedTags([]);
+    setPostponeCustomTagInput('');
+    setPostponeObservaciones('');
     setError(null);
     setSuccessMessage(`Incidencia registrada: Actividad trasladada al ${postponeTargetDay} ${formatFriendlyDate(targetExactDate)}.`);
   } catch (err) {
@@ -1041,6 +1110,10 @@ const reportData = useMemo(() => {
         || (apl.fecha_nueva >= startDate && apl.fecha_nueva <= endDate);
 
       if (inPeriod) {
+        const itemTags = Array.isArray(apl.tags) && apl.tags.length > 0
+          ? apl.tags
+          : (apl.motivo ? apl.motivo.split(',').map(s => s.trim()).filter(Boolean) : ['General']);
+
         incidentItems.push({
           taskId: task.id,
           task,
@@ -1053,14 +1126,17 @@ const reportData = useMemo(() => {
           dia_anterior: apl.dia_anterior,
           fecha_nueva: apl.fecha_nueva,
           dia_nuevo: apl.dia_nuevo,
-          motivo: apl.motivo,
+          tags: itemTags,
+          motivo: apl.motivo || itemTags.join(', '),
           detalle: apl.detalle,
           fecha_registro: apl.fecha_registro,
           total_aplazamientos: aplazamientos.length,
           numero_intento: idx + 1
         });
 
-        motivesCount[apl.motivo] = (motivesCount[apl.motivo] || 0) + 1;
+        itemTags.forEach(tag => {
+          motivesCount[tag] = (motivesCount[tag] || 0) + 1;
+        });
       }
     });
   });
@@ -2874,34 +2950,88 @@ Guardar Cambios
             </p>
           </div>
 
-          {/* Motivo de no ejecución */}
+          {/* Espacio para escribir el motivo y observaciones */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-              Motivo concreto de la no ejecución <span className="text-red-500">*</span>
-            </label>
-            <select
-              value={postponeMotivo}
-              onChange={(e) => setPostponeMotivo(e.target.value)}
-              className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-              required
-            >
-              {MOTIVOS_NO_EJECUCION.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Detalle o causas específicas */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-              Detalle u observaciones concretas
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+              <span>Motivo / Explicación de la no ejecución <span className="text-red-500">*</span></span>
+              <span className="text-[10px] font-normal text-slate-400">Describe qué ocurrió en la obra</span>
             </label>
             <textarea
-              value={postponeDetalle}
-              onChange={(e) => setPostponeDetalle(e.target.value)}
-              placeholder="Explica qué ocurrió (ej: El camión de mortero no llegó a tiempo, o la lluvia inundó la zanja...)"
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 h-20 resize-none"
+              value={postponeObservaciones}
+              onChange={(e) => setPostponeObservaciones(e.target.value)}
+              placeholder="Escribe aquí el motivo o causas de la no ejecución (ej: El camión de mortero no llegó a tiempo, o la lluvia impidió hormigonar...)"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 h-22 resize-none leading-relaxed"
+              required={postponeSelectedTags.length === 0}
             />
+          </div>
+
+          {/* Categorización con Tags (etiquetas existentes y nuevas) */}
+          <div className="space-y-2.5 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <Tag className="w-3.5 h-3.5 text-amber-500" />
+                Categorizar con Etiquetas (Tags)
+              </label>
+              {postponeSelectedTags.length > 0 && (
+                <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full">
+                  {postponeSelectedTags.length} {postponeSelectedTags.length === 1 ? 'seleccionada' : 'seleccionadas'}
+                </span>
+              )}
+            </div>
+
+            <p className="text-[11px] text-slate-500 leading-tight">
+              Pulsa sobre las etiquetas existentes para seleccionarlas o deseleccionarlas, o añade una nueva:
+            </p>
+
+            {/* Nube de etiquetas seleccionables */}
+            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1.5 bg-white rounded-lg border border-slate-200">
+              {allAvailableTags.map((tag) => {
+                const isSelected = postponeSelectedTags.includes(tag);
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => handleToggleTag(tag)}
+                    className={`px-2.5 py-1 rounded-lg text-xs transition-all cursor-pointer flex items-center gap-1 border ${
+                      isSelected
+                        ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-2xs font-extrabold'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200 hover:border-slate-300 font-medium'
+                    }`}
+                  >
+                    {isSelected ? <Check className="w-3 h-3 text-slate-950" /> : <span className="text-slate-400">#</span>}
+                    <span>{tag}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Input para crear nueva etiqueta */}
+            <div className="flex items-center gap-2 pt-1">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={postponeCustomTagInput}
+                  onChange={(e) => setPostponeCustomTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddNewTag();
+                    }
+                  }}
+                  placeholder="Escribe una nueva etiqueta y pulsa Añadir..."
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleAddNewTag}
+                disabled={!postponeCustomTagInput.trim()}
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold rounded-lg flex items-center gap-1 cursor-pointer transition-colors shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Añadir tag
+              </button>
+            </div>
           </div>
 
           {/* Reprogramación / Traslado */}
@@ -3077,12 +3207,21 @@ Guardar Cambios
                         <span className="font-bold text-slate-500">Fecha no ejecutada:</span>
                         <span className="font-semibold text-rose-700">{apl.dia_anterior} {formatFriendlyDate(apl.fecha_anterior)}</span>
                       </div>
-                      <div className="flex items-baseline gap-1 text-slate-700">
-                        <span className="font-bold text-slate-500">Motivo:</span>
-                        <span className="font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200 inline-block">{apl.motivo}</span>
+                      <div className="flex items-start gap-1.5 text-slate-700">
+                        <span className="font-bold text-slate-500 shrink-0 text-xs mt-0.5">Etiquetas:</span>
+                        <div className="flex flex-wrap gap-1">
+                          {(Array.isArray(apl.tags) && apl.tags.length > 0
+                            ? apl.tags
+                            : (apl.motivo ? apl.motivo.split(',').map(s => s.trim()).filter(Boolean) : ['General'])
+                          ).map(t => (
+                            <span key={t} className="font-bold text-amber-950 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-md text-[10px]">
+                              #{t}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                       {apl.detalle && (
-                        <div className="bg-white/80 p-2 rounded-lg border border-slate-200 text-slate-700 italic text-[11px] leading-relaxed">
+                        <div className="bg-white/90 p-2.5 rounded-lg border border-slate-200 text-slate-800 italic text-[11px] leading-relaxed">
                           "{apl.detalle}"
                         </div>
                       )}
@@ -4029,7 +4168,7 @@ return (
                 <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 print:bg-transparent">
                   <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                    Distribución de Causas de No Ejecución
+                    Distribución de Causas y Etiquetas de No Ejecución
                   </h4>
                   <div className="space-y-1.5">
                     {Object.entries(motivesCount)
@@ -4077,7 +4216,7 @@ return (
                           <th className="p-2.5">Obra / Gremio</th>
                           <th className="p-2.5">Actividad Programada</th>
                           <th className="p-2.5">Fecha Prevista</th>
-                          <th className="p-2.5">Motivo Concreto & Observaciones</th>
+                          <th className="p-2.5">Etiquetas (Tags) & Observaciones</th>
                           <th className="p-2.5">Trasladada a</th>
                           <th className="p-2.5 text-center">Nº Aplazam.</th>
                           <th className="p-2.5 text-center">Estado</th>
@@ -4100,8 +4239,12 @@ return (
                               <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_anterior)}</div>
                             </td>
                             <td className="p-2.5 align-top space-y-1">
-                              <div className="font-bold text-slate-900 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px] inline-block">
-                                {item.motivo}
+                              <div className="flex flex-wrap gap-1">
+                                {(item.tags || (item.motivo ? item.motivo.split(',').map(s => s.trim()) : ['General'])).map(t => (
+                                  <span key={t} className="font-bold text-amber-950 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded text-[10px]">
+                                    #{t}
+                                  </span>
+                                ))}
                               </div>
                               {item.detalle && (
                                 <p className="text-[11px] italic text-slate-600 leading-tight">
