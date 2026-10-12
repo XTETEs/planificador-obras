@@ -6,14 +6,19 @@ rules_version = '2';
 //
 // This security rules file assumes the following data structures:
 //
-// Collection: obras
+// Root Collections (Legacy / Demo Data - Read-only for authenticated users):
+//   - /obras/{obraId}
+//   - /tareas/{tareaId}
+//
+// User-Isolated Collections:
+// Collection: /users/{userId}/obras
 // Document ID: obraId (string)
 // Fields:
 //   - id: string (required, 1-100 chars, must match document ID) - Identificador único de la obra
 //   - nombre: string (required, 1-200 chars) - Nombre descriptivo de la obra
 //   - activo: bool | number (required, 0, 1, false, or true) - Indicador de obra activa
 //
-// Collection: tareas
+// Collection: /users/{userId}/tareas
 // Document ID: tareaId (string)
 // Fields:
 //   - id: string (required, 1-100 chars, must match document ID) - Identificador único de la tarea
@@ -26,10 +31,14 @@ rules_version = '2';
 //   - notas: string (optional, 0-2000 chars) - Observaciones adicionales
 //   - fecha_creado: string (required, ISO 8601 string, immutable) - Fecha y hora de creación de la tarea
 //
-// Note: Client authentication is currently unconstrained as Firebase Auth
-// is not yet integrated in the web application. Robust schema constraints,
-// field-level type validation, size limits, and immutability checks are
-// enforced to ensure data integrity.
+// User Profile Collection:
+// Collection: /users/{userId}
+// Document ID: userId (string, must match authenticated user UID)
+//
+// Authentication & Isolation:
+// Users authenticate with their corporate @enue.es accounts. All user-specific
+// obras and tareas are partitioned under /users/{userId}/..., where only the
+// authenticated owner (request.auth.uid == userId) has access.
 //
 // ===============================================================
 
@@ -39,6 +48,16 @@ service cloud.firestore {
     // ===============================================================
     // Helper Functions
     // ===============================================================
+
+    // Check if the request is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the user is the authenticated owner of the resource path
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
 
     // Validate boolean or binary integer (0 or 1)
     function isValidFlag(val) {
@@ -116,29 +135,58 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Obras Collection
+    // -------------------------------------------------------------
+    // Backward Compatibility: Root Collections (Legacy / Demo Data)
+    // Authenticated users can read to seed/import on first login.
+    // Public unauthenticated access and direct writes are forbidden.
+    // -------------------------------------------------------------
     match /obras/{obraId} {
-      allow read: if true;
-
-      allow create: if isValidObra(request.resource.data, obraId);
-
-      allow update: if isValidObra(request.resource.data, obraId) &&
-        request.resource.data.id == resource.data.id;
-
-      allow delete: if true;
+      allow read: if isAuthenticated();
+      allow write: if false;
     }
 
-    // Tareas Collection
     match /tareas/{tareaId} {
-      allow read: if true;
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
 
-      allow create: if isValidTarea(request.resource.data, tareaId);
+    // -------------------------------------------------------------
+    // Per-User Isolated Data
+    // Scoped under /users/{userId}/...
+    // Only the authenticated owner (request.auth.uid == userId) has access.
+    // -------------------------------------------------------------
+    match /users/{userId} {
+      // User profile / root user document
+      allow read, write: if isOwner(userId);
 
-      allow update: if isValidTarea(request.resource.data, tareaId) &&
-        request.resource.data.id == resource.data.id &&
-        request.resource.data.fecha_creado == resource.data.fecha_creado;
+      // User's private 'obras' subcollection
+      match /obras/{obraId} {
+        allow read: if isOwner(userId);
 
-      allow delete: if true;
+        allow create: if isOwner(userId) &&
+          isValidObra(request.resource.data, obraId);
+
+        allow update: if isOwner(userId) &&
+          isValidObra(request.resource.data, obraId) &&
+          request.resource.data.id == resource.data.id;
+
+        allow delete: if isOwner(userId);
+      }
+
+      // User's private 'tareas' subcollection
+      match /tareas/{tareaId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+          isValidTarea(request.resource.data, tareaId);
+
+        allow update: if isOwner(userId) &&
+          isValidTarea(request.resource.data, tareaId) &&
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.fecha_creado == resource.data.fecha_creado;
+
+        allow delete: if isOwner(userId);
+      }
     }
   }
 }

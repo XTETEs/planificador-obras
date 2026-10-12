@@ -23,10 +23,15 @@ const firebaseConfig = {
   appId: "1:283726110291:web:aa11836d1a3b90da22f0a6"
 };
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-const firestore = getFirestore(app);
+export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+export const firestore = getFirestore(app);
 
-// In-memory cache synced with Firestore in real-time
+// Estado de usuario y sincronización privada
+let currentUserId = null;
+let unsubObras = null;
+let unsubTareas = null;
+
+// Caché en memoria para las obras y tareas de la sesión activa del usuario
 let obrasMap = new Map();
 let tareasMap = new Map();
 let isInitialized = false;
@@ -45,22 +50,133 @@ function notify(hasPending) {
   });
 }
 
-function initFirestoreSync() {
-  if (initPromise) return initPromise;
+const DEFAULT_STARTER_OBRAS = [
+  { id: '1', nombre: 'Residencial Las Palmeras (Fase 2)', activo: 1 },
+  { id: '2', nombre: 'Reforma Integral Oficinas Centrales', activo: 1 },
+  { id: '3', nombre: 'Vivienda Unifamiliar La Cañada', activo: 1 },
+  { id: '4', nombre: 'Edificio Residencial Gran Vía', activo: 1 }
+];
+
+/**
+ * Si es el primer acceso de un usuario corporativo y no tiene obras privadas creadas:
+ * 1) Intenta migrar las obras y tareas que existieran previamente en la raíz de Firestore
+ * 2) Si no hay obras en la raíz, crea las obras iniciales de plantilla para empezar a planificar
+ */
+async function seedUserInitialData(userId) {
+  try {
+    // 1. Intentar volcar datos existentes de la raíz si los hubiera
+    const rootObrasSnap = await getDocs(collection(firestore, 'obras'));
+    if (!rootObrasSnap.empty) {
+      const batch = writeBatch(firestore);
+      let count = 0;
+
+      rootObrasSnap.forEach((docSnap) => {
+        const data = docSnap.data();
+        const obraDoc = {
+          id: docSnap.id,
+          nombre: data.nombre || '',
+          activo: data.activo !== undefined ? Number(data.activo) : 1
+        };
+        batch.set(doc(firestore, 'users', userId, 'obras', docSnap.id), obraDoc);
+        obrasMap.set(docSnap.id, obraDoc);
+        count++;
+      });
+
+      try {
+        const rootTareasSnap = await getDocs(collection(firestore, 'tareas'));
+        rootTareasSnap.forEach((docSnap) => {
+          const data = docSnap.data();
+          const tareaDoc = {
+            id: docSnap.id,
+            obra_id: String(data.obra_id || ''),
+            fecha_semana: String(data.fecha_semana || ''),
+            dia_semana: String(data.dia_semana || ''),
+            actividad: String(data.actividad || ''),
+            gremio: String(data.gremio || 'Otros'),
+            completada: data.completada !== undefined ? Number(data.completada) : 0,
+            notas: String(data.notas || ''),
+            fecha_creado: String(data.fecha_creado || new Date().toISOString())
+          };
+          batch.set(doc(firestore, 'users', userId, 'tareas', docSnap.id), tareaDoc);
+          tareasMap.set(docSnap.id, tareaDoc);
+          count++;
+        });
+      } catch (err) {
+        console.warn('Tareas raíz no legibles o no disponibles:', err);
+      }
+
+      if (count > 0) {
+        await batch.commit();
+        return;
+      }
+    }
+  } catch (err) {
+    console.log('Lectura de obras raíz omitida o restringida por reglas:', err?.message);
+  }
+
+  // 2. Sembrar obras base iniciales si el usuario no tiene ninguna
+  try {
+    const batch = writeBatch(firestore);
+    for (const obra of DEFAULT_STARTER_OBRAS) {
+      batch.set(doc(firestore, 'users', userId, 'obras', obra.id), obra);
+      obrasMap.set(obra.id, obra);
+    }
+    await batch.commit();
+  } catch (err) {
+    console.error('Error al sembrar obras iniciales del usuario:', err);
+  }
+}
+
+/**
+ * Conecta la base de datos a la sesión del usuario autenticado.
+ * Aísla 100% las obras y tareas bajo /users/{uid}/obras y /users/{uid}/tareas
+ */
+export function setUserContext(user) {
+  const newUserId = user ? user.uid : null;
+
+  if (currentUserId === newUserId && isInitialized) {
+    return initPromise || Promise.resolve();
+  }
+
+  // Desconectar oyentes previos si cambia de usuario o cierra sesión
+  if (unsubObras) {
+    unsubObras();
+    unsubObras = null;
+  }
+  if (unsubTareas) {
+    unsubTareas();
+    unsubTareas = null;
+  }
+
+  obrasMap.clear();
+  tareasMap.clear();
+  currentUserId = newUserId;
+  isInitialized = false;
+
+  if (!currentUserId) {
+    initPromise = Promise.resolve();
+    notify(false);
+    return initPromise;
+  }
 
   initPromise = new Promise((resolve) => {
     let obrasReady = false;
     let tareasReady = false;
 
-    function checkReady() {
+    async function checkReady() {
       if (obrasReady && tareasReady && !isInitialized) {
+        if (obrasMap.size === 0) {
+          await seedUserInitialData(currentUserId);
+        }
         isInitialized = true;
         resolve();
+        notify(false);
       }
     }
 
-    // Real-time listener for 'obras'
-    onSnapshot(collection(firestore, 'obras'), (snapshot) => {
+    // Escucha en tiempo real de 'obras' para el usuario actual
+    const obrasCol = collection(firestore, 'users', currentUserId, 'obras');
+    unsubObras = onSnapshot(obrasCol, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         const data = change.doc.data();
         if (change.type === 'removed') {
@@ -77,13 +193,14 @@ function initFirestoreSync() {
       checkReady();
       if (isInitialized) notify(false);
     }, (error) => {
-      console.error('Firestore obras error:', error);
+      console.error('Firestore obras usuario error:', error);
       obrasReady = true;
       checkReady();
     });
 
-    // Real-time listener for 'tareas'
-    onSnapshot(collection(firestore, 'tareas'), (snapshot) => {
+    // Escucha en tiempo real de 'tareas' para el usuario actual
+    const tareasCol = collection(firestore, 'users', currentUserId, 'tareas');
+    unsubTareas = onSnapshot(tareasCol, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         const data = change.doc.data();
         if (change.type === 'removed') {
@@ -106,7 +223,7 @@ function initFirestoreSync() {
       checkReady();
       if (isInitialized) notify(false);
     }, (error) => {
-      console.error('Firestore tareas error:', error);
+      console.error('Firestore tareas usuario error:', error);
       tareasReady = true;
       checkReady();
     });
@@ -115,8 +232,9 @@ function initFirestoreSync() {
   return initPromise;
 }
 
-// Start listeners immediately
-initFirestoreSync();
+export function getCurrentUserId() {
+  return currentUserId;
+}
 
 export const db = {
   permission: 'write',
@@ -124,7 +242,9 @@ export const db = {
   get pendingCount() { return pending; },
 
   async query(sql, params) {
-    await initFirestoreSync();
+    if (initPromise) {
+      await initPromise;
+    }
     const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
 
     // Query 1: SELECT * FROM obras ORDER BY nombre ASC
@@ -181,6 +301,10 @@ export const db = {
   },
 
   async exec(sql, params = []) {
+    if (!currentUserId) {
+      throw new Error('Debes iniciar sesión con tu cuenta corporativa para guardar información.');
+    }
+
     pending++;
     notify(true);
 
@@ -196,7 +320,7 @@ export const db = {
           nombre: String(nombre),
           activo: Number(activo) || 1
         };
-        await setDoc(doc(firestore, 'obras', String(id)), obraDoc);
+        await setDoc(doc(firestore, 'users', currentUserId, 'obras', String(id)), obraDoc);
         obrasMap.set(String(id), obraDoc);
         return { changes: 1 };
       }
@@ -204,7 +328,7 @@ export const db = {
       // UPDATE obras SET nombre = ? WHERE id = ?
       if (lower.startsWith('update obras set nombre = ? where id = ?')) {
         const [nombre, id] = params;
-        await updateDoc(doc(firestore, 'obras', String(id)), { nombre: String(nombre) });
+        await updateDoc(doc(firestore, 'users', currentUserId, 'obras', String(id)), { nombre: String(nombre) });
         if (obrasMap.has(String(id))) {
           obrasMap.get(String(id)).nombre = String(nombre);
         }
@@ -214,7 +338,10 @@ export const db = {
       // DELETE FROM tareas WHERE obra_id = ?
       if (lower.startsWith('delete from tareas where obra_id = ?')) {
         const [obraId] = params;
-        const q = query(collection(firestore, 'tareas'), where('obra_id', '==', String(obraId)));
+        const q = query(
+          collection(firestore, 'users', currentUserId, 'tareas'),
+          where('obra_id', '==', String(obraId))
+        );
         const snap = await getDocs(q);
         const batch = writeBatch(firestore);
         snap.forEach((d) => {
@@ -228,7 +355,7 @@ export const db = {
       // DELETE FROM obras WHERE id = ?
       if (lower.startsWith('delete from obras where id = ?')) {
         const [id] = params;
-        await deleteDoc(doc(firestore, 'obras', String(id)));
+        await deleteDoc(doc(firestore, 'users', currentUserId, 'obras', String(id)));
         obrasMap.delete(String(id));
         return { changes: 1 };
       }
@@ -247,7 +374,7 @@ export const db = {
           notas: String(notas || ''),
           fecha_creado: String(fecha_creado || new Date().toISOString())
         };
-        await setDoc(doc(firestore, 'tareas', String(id)), tareaDoc);
+        await setDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), tareaDoc);
         tareasMap.set(String(id), tareaDoc);
         return { changes: 1 };
       }
@@ -262,7 +389,7 @@ export const db = {
           gremio: String(gremio),
           notas: String(notas || '')
         };
-        await updateDoc(doc(firestore, 'tareas', String(id)), updateData);
+        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
         if (tareasMap.has(String(id))) {
           Object.assign(tareasMap.get(String(id)), updateData);
         }
@@ -278,7 +405,7 @@ export const db = {
           dia_semana: String(dia_semana),
           notas: String(notas || '')
         };
-        await updateDoc(doc(firestore, 'tareas', String(id)), updateData);
+        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
         if (tareasMap.has(String(id))) {
           Object.assign(tareasMap.get(String(id)), updateData);
         }
@@ -293,7 +420,7 @@ export const db = {
           dia_semana: String(dia_semana),
           notas: String(notas || '')
         };
-        await updateDoc(doc(firestore, 'tareas', String(id)), updateData);
+        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
         if (tareasMap.has(String(id))) {
           Object.assign(tareasMap.get(String(id)), updateData);
         }
@@ -306,7 +433,7 @@ export const db = {
         const updateData = {
           notas: String(notas || '')
         };
-        await updateDoc(doc(firestore, 'tareas', String(id)), updateData);
+        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
         if (tareasMap.has(String(id))) {
           Object.assign(tareasMap.get(String(id)), updateData);
         }
@@ -320,7 +447,7 @@ export const db = {
           fecha_semana: String(fecha_semana),
           dia_semana: String(dia_semana)
         };
-        await updateDoc(doc(firestore, 'tareas', String(id)), updateData);
+        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
         if (tareasMap.has(String(id))) {
           Object.assign(tareasMap.get(String(id)), updateData);
         }
@@ -331,7 +458,7 @@ export const db = {
       if (lower.startsWith('update tareas set completada = ? where id = ?')) {
         const [completada, id] = params;
         const updateData = { completada: Number(completada) || 0 };
-        await updateDoc(doc(firestore, 'tareas', String(id)), updateData);
+        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
         if (tareasMap.has(String(id))) {
           Object.assign(tareasMap.get(String(id)), updateData);
         }
@@ -341,7 +468,7 @@ export const db = {
       // DELETE FROM tareas WHERE id = ?
       if (lower.startsWith('delete from tareas where id = ?')) {
         const [id] = params;
-        await deleteDoc(doc(firestore, 'tareas', String(id)));
+        await deleteDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)));
         tareasMap.delete(String(id));
         return { changes: 1 };
       }
@@ -401,9 +528,13 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Vuelca los datos guardados en SQLite / IndexedDB local de este navegador hacia Firestore.
+ * Vuelca los datos guardados en SQLite / IndexedDB local de este navegador hacia Firestore (espacio privado del usuario).
  */
 export async function migrateLocalDataToFirestore() {
+  if (!currentUserId) {
+    return { success: false, countObras: 0, countTareas: 0, message: 'Usuario no autenticado.' };
+  }
+
   if (typeof window === 'undefined' || !window.indexedDB) {
     return { success: false, countObras: 0, countTareas: 0, message: 'IndexedDB no está disponible en este entorno.' };
   }
@@ -495,17 +626,17 @@ export async function migrateLocalDataToFirestore() {
       };
     }
 
-    // Subir a Firestore
+    // Subir a Firestore bajo users/${currentUserId}
     let batch = writeBatch(firestore);
     let opCount = 0;
 
     for (const obra of localObras) {
-      batch.set(doc(firestore, 'obras', obra.id), obra, { merge: true });
+      batch.set(doc(firestore, 'users', currentUserId, 'obras', obra.id), obra, { merge: true });
       opCount++;
     }
 
     for (const tarea of localTareas) {
-      batch.set(doc(firestore, 'tareas', tarea.id), tarea, { merge: true });
+      batch.set(doc(firestore, 'users', currentUserId, 'tareas', tarea.id), tarea, { merge: true });
       opCount++;
       if (opCount >= 400) {
         await batch.commit();
@@ -522,11 +653,10 @@ export async function migrateLocalDataToFirestore() {
       success: true,
       countObras: localObras.length,
       countTareas: localTareas.length,
-      message: `¡Volcado completado con éxito! Se han volcado ${localObras.length} obras y ${localTareas.length} tareas locales a la base de datos de Firebase.`
+      message: `¡Volcado completado con éxito! Se han volcado ${localObras.length} obras y ${localTareas.length} tareas locales a tu espacio privado en Firebase.`
     };
   } catch (err) {
     console.error('Error durante la migración local a Firestore:', err);
     return { success: false, message: 'Error durante la migración: ' + err.message };
   }
 }
-

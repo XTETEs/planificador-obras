@@ -37,9 +37,13 @@ FileSpreadsheet,
 History,
 CalendarRange,
 ArrowRight,
-Tag
+Tag,
+LogOut,
+ShieldCheck
 } from 'lucide-react';
-import { migrateLocalDataToFirestore } from './services/db.js';
+import { migrateLocalDataToFirestore, setUserContext } from './services/db.js';
+import { onAuthUserChange, logout, CORPORATE_DOMAIN } from './services/auth.js';
+import { AuthView } from './components/AuthView.jsx';
 // EMBEDDED DATABASES ID
 const DB_ID = '6a548f958d05750f33c2b531';
 const DIAS_SEMANA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
@@ -227,6 +231,9 @@ const serializeTaskNotas = (userNotas, aplazamientos = []) => {
 let currentDraggedTask = null;
 
 function App() {
+const [currentUser, setCurrentUser] = useState(null);
+const [authLoading, setAuthLoading] = useState(true);
+const [isLoggingOut, setIsLoggingOut] = useState(false);
 const [db] = useState(() => AiKit.db(DB_ID, { live: true }));
 // State
 const [obras, setObras] = useState([]);
@@ -334,7 +341,7 @@ const [parsedTasks, setParsedTasks] = useState([]); // Preview of parsed tasks b
 const recognitionRef = useRef(null);
 // Fetch list of works and tasks
 const loadData = useCallback(async () => {
-if (!db) return;
+if (!db || !currentUser) return;
 try {
 // Load construction sites
 const obrasRes = await db.query('SELECT * FROM obras ORDER BY nombre ASC');
@@ -364,13 +371,35 @@ setTareas(mappedTareas.filter(task => task.fecha_semana === currentWeekMonday));
 } catch (e) {
 setError('Error cargando datos de la base de datos: ' + e.message);
 }
-}, [db, currentWeekMonday, manualTask.obra_id]);
+}, [db, currentUser, currentWeekMonday, manualTask.obra_id]);
+
+// Escucha de estado de autenticación corporativa
 useEffect(() => {
-loadData();
+  const unsubAuth = onAuthUserChange(async (user) => {
+    if (user) {
+      setCurrentUser(user);
+      try {
+        await setUserContext(user);
+        loadData();
+      } catch (err) {
+        console.error('Error inicializando contexto de usuario:', err);
+      }
+    } else {
+      setCurrentUser(null);
+      setUserContext(null);
+      setObras([]);
+      setTareas([]);
+      setTodasLasTareas([]);
+    }
+    setAuthLoading(false);
+  });
+
+  return () => unsubAuth();
 }, [loadData]);
+
 // Database Sync Event listeners
 useEffect(() => {
-if (!db) return;
+if (!db || !currentUser) return;
 const unsubscribe = db.onPendingChange((hasPending) => {
 setSyncing(hasPending);
 if (!hasPending) {
@@ -378,19 +407,36 @@ loadData(); // Reload safely when synched
 }
 });
 return () => unsubscribe();
-}, [db, loadData]);
+}, [db, currentUser, loadData]);
+
 useEffect(() => {
-  const alreadyMigrated = localStorage.getItem('local_db_migrated_v1');
+  if (!currentUser) return;
+  const userMigrateKey = `local_db_migrated_${currentUser.uid}`;
+  const alreadyMigrated = localStorage.getItem(userMigrateKey);
   if (!alreadyMigrated) {
     migrateLocalDataToFirestore().then((res) => {
       if (res.success && (res.countObras > 0 || res.countTareas > 0)) {
-        localStorage.setItem('local_db_migrated_v1', 'true');
-        setSuccessMessage(`Sincronización automática: se han volcado ${res.countObras} obras y ${res.countTareas} tareas locales a Firebase.`);
+        localStorage.setItem(userMigrateKey, 'true');
+        setSuccessMessage(`Sincronización automática: se han volcado ${res.countObras} obras y ${res.countTareas} tareas locales a tu sesión.`);
         loadData();
       }
     }).catch(console.error);
   }
-}, [loadData]);
+}, [currentUser, loadData]);
+
+const handleLogout = async () => {
+  if (!confirm(`¿Deseas cerrar tu sesión corporativa (${currentUser?.email})?`)) return;
+  try {
+    setIsLoggingOut(true);
+    await logout();
+    setCurrentUser(null);
+    setSuccessMessage('Sesión cerrada correctamente.');
+  } catch (err) {
+    setError('Error al cerrar sesión: ' + err.message);
+  } finally {
+    setIsLoggingOut(false);
+  }
+};
 // Change week
 const navigateWeek = (weeksToShift) => {
   const parts = (currentWeekMonday || '').split('-').map(Number);
@@ -1567,6 +1613,35 @@ const completed = filteredTareas.filter(t => t.completada).length;
 const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 return { total, completed, pct };
 }, [filteredTareas]);
+
+if (authLoading) {
+  return (
+    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 selection:bg-amber-500 selection:text-slate-950">
+      <div className="w-16 h-16 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center shadow-2xl shadow-amber-500/20 mb-4 animate-bounce">
+        <Building className="w-8 h-8" />
+      </div>
+      <h1 className="text-xl font-bold text-white mb-1">Planificador Semanal Actividades / Repasos</h1>
+      <p className="text-xs font-semibold text-slate-400 mb-6 uppercase tracking-wider">ENUE Proyectos y Construcción</p>
+      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-sm text-amber-400">
+        <RefreshCw className="w-4 h-4 animate-spin" />
+        <span>Verificando sesión corporativa (@{CORPORATE_DOMAIN})...</span>
+      </div>
+    </div>
+  );
+}
+
+if (!currentUser) {
+  return (
+    <AuthView
+      onAuthSuccess={async (user) => {
+        setCurrentUser(user);
+        await setUserContext(user);
+        loadData();
+      }}
+    />
+  );
+}
+
 return (
 <div className="min-h-screen bg-slate-50 text-slate-800">
 {/* Dashboard Principal (Oculto al imprimir) */}
@@ -1616,6 +1691,36 @@ className="bg-slate-900 hover:bg-slate-800 text-white hover:cursor-pointer font-
 <Plus className="w-4 h-4" />
 <span>Añadir Actividad</span>
 </button>
+
+{/* Sesión de Usuario Corporativo */}
+<div className="flex items-center gap-2.5 pl-3 border-t sm:border-t-0 sm:border-l border-slate-200 shrink-0 w-full sm:w-auto justify-between sm:justify-start pt-2 sm:pt-0">
+  <div className="flex items-center gap-2">
+    <div
+      className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 font-bold flex items-center justify-center text-xs shadow-xs shrink-0 ring-2 ring-amber-400/40"
+      title={currentUser.email}
+    >
+      {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : (currentUser.email ? currentUser.email.charAt(0).toUpperCase() : 'U')}
+    </div>
+    <div className="text-left">
+      <p className="text-xs font-bold text-slate-900 leading-tight truncate max-w-[130px]" title={currentUser.displayName || currentUser.email}>
+        {currentUser.displayName || currentUser.email.split('@')[0]}
+      </p>
+      <p className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+        @{CORPORATE_DOMAIN}
+      </p>
+    </div>
+  </div>
+  <button
+    type="button"
+    onClick={handleLogout}
+    disabled={isLoggingOut}
+    className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer border border-slate-200 hover:border-red-200 shrink-0"
+    title={`Cerrar sesión (${currentUser.email})`}
+  >
+    <LogOut className="w-4 h-4" />
+  </button>
+</div>
 </div>
 </div>
 {/* Alerts panel */}
