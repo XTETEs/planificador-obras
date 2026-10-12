@@ -24,7 +24,14 @@ ArrowRightLeft,
 Layers,
 Printer,
 MoreVertical,
-GripVertical
+GripVertical,
+LayoutGrid,
+Columns3,
+Table,
+Filter,
+CalendarDays,
+CheckCircle2,
+Clock
 } from 'lucide-react';
 import { migrateLocalDataToFirestore } from './services/db.js';
 // EMBEDDED DATABASES ID
@@ -107,6 +114,48 @@ const date = new Date(`${weekMonday}T12:00:00`);
 date.setDate(date.getDate() + dayIndex);
 return date.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
 };
+
+// Paleta unificada de colores por obra
+const OBRA_COLOR_PALETTE = [
+  { text: '#1d4ed8', border: '#2563eb', background: '#eff6ff', badge: 'bg-blue-100 text-blue-800 border-blue-200' },
+  { text: '#6d28d9', border: '#7c3aed', background: '#f5f3ff', badge: 'bg-purple-100 text-purple-800 border-purple-200' },
+  { text: '#15803d', border: '#16a34a', background: '#f0fdf4', badge: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+  { text: '#c2410c', border: '#ea580c', background: '#fff7ed', badge: 'bg-orange-100 text-orange-800 border-orange-200' },
+  { text: '#b91c1c', border: '#dc2626', background: '#fef2f2', badge: 'bg-rose-100 text-rose-800 border-rose-200' },
+  { text: '#0f766e', border: '#0d9488', background: '#f0fdfa', badge: 'bg-teal-100 text-teal-800 border-teal-200' },
+  { text: '#a16207', border: '#ca8a04', background: '#fefce8', badge: 'bg-amber-100 text-amber-800 border-amber-200' },
+  { text: '#be185d', border: '#db2777', background: '#fdf2f8', badge: 'bg-pink-100 text-pink-800 border-pink-200' }
+];
+
+const getObraColor = (obraId, obrasList = []) => {
+  const index = obrasList.findIndex(o => o[0] === obraId);
+  if (index === -1) return OBRA_COLOR_PALETTE[0];
+  return OBRA_COLOR_PALETTE[index % OBRA_COLOR_PALETTE.length];
+};
+
+const DIAS_SEMANA_OFFSET = {
+  'Lunes': 0,
+  'Martes': 1,
+  'Miércoles': 2,
+  'Jueves': 3,
+  'Viernes': 4,
+  'Sábado': 5,
+  'Domingo': 6
+};
+
+// Calcula la fecha exacta ISO YYYY-MM-DD de una tarea
+const getTaskExactDate = (task) => {
+  if (!task || !task.fecha_semana) return null;
+  const offset = DIAS_SEMANA_OFFSET[task.dia_semana] ?? 0;
+  const parts = String(task.fecha_semana).split('-').map(Number);
+  if (parts.length !== 3) return task.fecha_semana;
+  const d = new Date(parts[0], parts[1] - 1, parts[2] + offset, 12, 0, 0);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
 function App() {
 const [db] = useState(() => AiKit.db(DB_ID, { live: true }));
 // State
@@ -115,6 +164,16 @@ const [tareas, setTareas] = useState([]);
 const [todasLasTareas, setTodasLasTareas] = useState([]);
 const [selectedObraId, setSelectedObraId] = useState('all');
 const [currentWeekMonday, setCurrentWeekMonday] = useState(() => getMonday(new Date()));
+// Vistas principales: 'semanal' o 'mensual'
+const [activeView, setActiveView] = useState('semanal');
+// Cuadrante Mensual: submodo 'matriz' o 'calendario'
+const [monthlyQuadrantMode, setMonthlyQuadrantMode] = useState('matriz');
+const [monthViewDate, setMonthViewDate] = useState(() => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1, 12);
+});
+const [monthlyFilterStatus, setMonthlyFilterStatus] = useState('all'); // 'all', 'pending', 'completed'
+const [monthlyFilterGremio, setMonthlyFilterGremio] = useState('all');
 // UI Helpers
 const [error, setError] = useState(null);
 const [successMessage, setSuccessMessage] = useState(null);
@@ -137,6 +196,7 @@ const [printHideEmptyDays, setPrintHideEmptyDays] = useState(true);
 // Manual task form state
 const [manualTask, setManualTask] = useState({
 dia_semana: 'Lunes',
+fecha_semana: '',
 actividad: '',
 gremio: 'Albañilería',
 obra_id: '',
@@ -356,6 +416,138 @@ const calendarGridDays = useMemo(() => {
 
   return cells;
 }, [calendarViewDate]);
+
+// --- CUADRANTE MENSUAL: HELPERS Y MEMOS ---
+const prevQuadrantMonth = () => {
+  setMonthViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1, 12));
+};
+
+const nextQuadrantMonth = () => {
+  setMonthViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1, 12));
+};
+
+const goToCurrentMonth = () => {
+  const now = new Date();
+  setMonthViewDate(new Date(now.getFullYear(), now.getMonth(), 1, 12));
+};
+
+const monthYearOptions = useMemo(() => {
+  const currentY = new Date().getFullYear();
+  const years = [];
+  for (let y = currentY - 5; y <= currentY + 8; y++) {
+    years.push(y);
+  }
+  const viewY = monthViewDate.getFullYear();
+  if (!years.includes(viewY)) {
+    years.push(viewY);
+    years.sort((a, b) => a - b);
+  }
+  return years;
+}, [monthViewDate]);
+
+const todayExactDate = useMemo(() => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}, []);
+
+// Lista de todos los días del mes para el cuadrante
+const daysOfMonthList = useMemo(() => {
+  const list = [];
+  const y = monthViewDate.getFullYear();
+  const m = monthViewDate.getMonth();
+  const count = new Date(y, m + 1, 0).getDate();
+  const diaCorto = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  for (let d = 1; d <= count; d++) {
+    const dateObj = new Date(y, m, d, 12, 0, 0);
+    const dayOfWeek = dateObj.getDay(); // 0=Dom, 1=Lun..
+    const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    list.push({
+      dayNum: d,
+      dateStr,
+      dayOfWeek,
+      dayNameShort: diaCorto[dayOfWeek],
+      isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
+      dateObj
+    });
+  }
+  return list;
+}, [monthViewDate]);
+
+// Tareas filtradas para el mes seleccionado
+const monthTasks = useMemo(() => {
+  const y = monthViewDate.getFullYear();
+  const mStr = String(monthViewDate.getMonth() + 1).padStart(2, '0');
+  const prefix = `${y}-${mStr}`;
+  return todasLasTareas.filter(t => {
+    const exactDate = getTaskExactDate(t);
+    if (!exactDate || !exactDate.startsWith(prefix)) return false;
+    if (selectedObraId !== 'all' && t.obra_id !== selectedObraId) return false;
+    if (monthlyFilterStatus === 'pending' && t.completada) return false;
+    if (monthlyFilterStatus === 'completed' && !t.completada) return false;
+    if (monthlyFilterGremio !== 'all' && t.gremio !== monthlyFilterGremio) return false;
+    return true;
+  });
+}, [todasLasTareas, monthViewDate, selectedObraId, monthlyFilterStatus, monthlyFilterGremio]);
+
+// Mapa indexado [obra_id][dateStr] = [tareas]
+const tasksByObraAndDate = useMemo(() => {
+  const map = {};
+  monthTasks.forEach(t => {
+    const exactDate = getTaskExactDate(t);
+    if (!exactDate) return;
+    if (!map[t.obra_id]) map[t.obra_id] = {};
+    if (!map[t.obra_id][exactDate]) map[t.obra_id][exactDate] = [];
+    map[t.obra_id][exactDate].push(t);
+  });
+  return map;
+}, [monthTasks]);
+
+// Estadísticas del mes
+const monthStats = useMemo(() => {
+  const total = monthTasks.length;
+  const completed = monthTasks.filter(t => t.completada).length;
+  const pending = total - completed;
+  const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
+  return { total, completed, pending, pct };
+}, [monthTasks]);
+
+// Obras que se mostrarán en el cuadrante
+const displayedObras = useMemo(() => {
+  if (selectedObraId !== 'all') {
+    return obras.filter(o => o[0] === selectedObraId);
+  }
+  return obras;
+}, [obras, selectedObraId]);
+
+// Abrir modal de añadir tarea desde una celda de fecha y obra
+const handleOpenNewTaskForDateAndObra = (dateStr, obraId = '') => {
+  const targetMonday = getMonday(dateStr);
+  const dateObj = new Date(dateStr + 'T12:00:00');
+  const diaIndex = dateObj.getDay();
+  const diaNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  const diaName = diaNames[diaIndex] || 'Lunes';
+  
+  setManualTask({
+    dia_semana: DIAS_SEMANA.includes(diaName) ? diaName : 'Lunes',
+    fecha_semana: targetMonday,
+    actividad: '',
+    gremio: 'Albañilería',
+    obra_id: obraId || (obras[0]?.[0] || ''),
+    notas: ''
+  });
+  setIsNewTaskModalOpen(true);
+};
+
+// Saltar a la vista semanal centrada en una fecha concreta
+const jumpToWeekFromDate = (dateStr) => {
+  const targetMonday = getMonday(dateStr);
+  setCurrentWeekMonday(targetMonday);
+  setActiveView('semanal');
+};
+
 // Add new Construction site
 const handleAddObra = async (e) => {
 if (e) e.preventDefault();
@@ -418,6 +610,7 @@ e.preventDefault();
 if (!manualTask.actividad.trim()) return;
 const taskId = 't_' + Date.now();
 const nowIso = new Date().toISOString();
+const targetWeek = manualTask.fecha_semana || currentWeekMonday;
 try {
 await db.exec(
 `INSERT OR REPLACE INTO tareas
@@ -426,7 +619,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 [
 taskId,
 manualTask.obra_id,
-currentWeekMonday,
+targetWeek,
 manualTask.dia_semana,
 manualTask.actividad.trim(),
 manualTask.gremio,
@@ -440,7 +633,7 @@ const matchedObra = obras.find(o => o[0] === manualTask.obra_id);
 const newLocalTask = {
 id: taskId,
 obra_id: manualTask.obra_id,
-fecha_semana: currentWeekMonday,
+fecha_semana: targetWeek,
 dia_semana: manualTask.dia_semana,
 actividad: manualTask.actividad.trim(),
 gremio: manualTask.gremio,
@@ -448,9 +641,13 @@ completada: false,
 notas: manualTask.notas.trim(),
 obra_nombre: matchedObra ? matchedObra[1] : 'Obra Desconocida'
 };
-setTareas(prev => [...prev, newLocalTask]);
+if (targetWeek === currentWeekMonday) {
+  setTareas(prev => [...prev, newLocalTask]);
+}
+setTodasLasTareas(prev => [...prev, newLocalTask]);
 setManualTask(prev => ({
 ...prev,
+fecha_semana: '',
 actividad: '',
 notas: ''
 }));
@@ -617,11 +814,13 @@ const newStatus = task.completada ? 0 : 1;
 try {
 // Update state optimistically
 setTareas(prev => prev.map(t => t.id === task.id ? { ...t, completada: !task.completada } : t));
+setTodasLasTareas(prev => prev.map(t => t.id === task.id ? { ...t, completada: !task.completada } : t));
 await db.exec('UPDATE tareas SET completada = ? WHERE id = ?', [String(newStatus), task.id]);
 } catch (err) {
 setError('Error al actualizar tarea: ' + err.message);
 // Rollback
 setTareas(prev => prev.map(t => t.id === task.id ? { ...t, completada: task.completada } : t));
+setTodasLasTareas(prev => prev.map(t => t.id === task.id ? { ...t, completada: task.completada } : t));
 }
 };
 // Delete task
@@ -629,6 +828,7 @@ const handleDeleteTask = async (taskId) => {
 if (!confirm('¿Estás seguro de que quieres eliminar esta actividad?')) return;
 try {
 setTareas(prev => prev.filter(t => t.id !== taskId));
+setTodasLasTareas(prev => prev.filter(t => t.id !== taskId));
 await db.exec('DELETE FROM tareas WHERE id = ?', [taskId]);
 } catch (err) {
 setError('Error al borrar actividad: ' + err.message);
@@ -879,6 +1079,52 @@ className="bg-slate-900 hover:bg-slate-800 text-white hover:cursor-pointer font-
 </button>
 </div>
 )}
+{/* Selector de Vista: Semanal vs Cuadrante Mensual */}
+<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 bg-white p-3 rounded-2xl border border-slate-200 shadow-2xs">
+  <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200/80 shadow-inner">
+    <button
+      type="button"
+      onClick={() => setActiveView('semanal')}
+      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+        activeView === 'semanal'
+          ? 'bg-white text-slate-950 shadow-xs border border-slate-200/60'
+          : 'text-slate-600 hover:text-slate-900'
+      }`}
+    >
+      <Columns3 className="w-4 h-4 text-amber-500" />
+      <span>Vista Semanal</span>
+    </button>
+    <button
+      type="button"
+      onClick={() => setActiveView('mensual')}
+      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+        activeView === 'mensual'
+          ? 'bg-white text-slate-950 shadow-xs border border-slate-200/60'
+          : 'text-slate-600 hover:text-slate-900'
+      }`}
+    >
+      <Calendar className="w-4 h-4 text-amber-500" />
+      <span>Cuadrante Mensual</span>
+      {monthStats.total > 0 && (
+        <span className="bg-amber-100 text-amber-800 text-[10px] font-black px-1.5 py-0.5 rounded-full ml-1">
+          {monthStats.total}
+        </span>
+      )}
+    </button>
+  </div>
+
+  <div className="text-xs text-slate-500 font-medium px-2">
+    {activeView === 'semanal' ? (
+      <span>Mostrando semana del <strong className="text-slate-800">{formatFriendlyDate(currentWeekMonday)}</strong></span>
+    ) : (
+      <span>Cuadrante de <strong className="text-slate-800">{MESES[monthViewDate.getMonth()]} {monthViewDate.getFullYear()}</strong> categorizado por obras</span>
+    )}
+  </div>
+</div>
+
+{/* VISTA SEMANAL */}
+{activeView === 'semanal' && (
+<div>
 {/* Control Bar & Progress */}
 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8">
 {/* Selector de Obra y Semana */}
@@ -1125,6 +1371,538 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
 </p>
 </div>
 </div>
+</div>
+)}
+
+{/* VISTA CUADRANTE MENSUAL */}
+{activeView === 'mensual' && (
+  <div className="space-y-6">
+    {/* Barra de control y navegación del Cuadrante Mensual */}
+    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+        {/* Navegador del Mes */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1.5 shadow-2xs">
+            <button
+              type="button"
+              onClick={prevQuadrantMonth}
+              title="Mes anterior"
+              className="p-2 hover:bg-white rounded-lg text-slate-700 hover:shadow-xs transition-all cursor-pointer"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+
+            {/* Selectores de Mes y Año */}
+            <div className="flex items-center gap-1.5 px-2">
+              <select
+                value={monthViewDate.getMonth()}
+                onChange={(e) => {
+                  const m = parseInt(e.target.value, 10);
+                  setMonthViewDate(new Date(monthViewDate.getFullYear(), m, 1, 12));
+                }}
+                className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+              >
+                {MESES.map((mes, idx) => (
+                  <option key={mes} value={idx}>{mes}</option>
+                ))}
+              </select>
+
+              <select
+                value={monthViewDate.getFullYear()}
+                onChange={(e) => {
+                  const y = parseInt(e.target.value, 10);
+                  setMonthViewDate(new Date(y, monthViewDate.getMonth(), 1, 12));
+                }}
+                className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+              >
+                {monthYearOptions.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={nextQuadrantMonth}
+              title="Mes siguiente"
+              className="p-2 hover:bg-white rounded-lg text-slate-700 hover:shadow-xs transition-all cursor-pointer"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={goToCurrentMonth}
+              title="Ir al mes actual"
+              className="text-xs bg-slate-200 hover:bg-slate-300 font-bold px-3 py-1.5 rounded-lg text-slate-800 hover:cursor-pointer transition-all ml-1"
+            >
+              Mes Actual
+            </button>
+          </div>
+        </div>
+
+        {/* Filtros de Obra, Estado y Sub-modo */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Filtrar Obra */}
+          <div className="flex-1 sm:flex-initial min-w-[200px]">
+            <select
+              value={selectedObraId}
+              onChange={(e) => setSelectedObraId(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+            >
+              <option value="all">📍 Todas las obras ({obras.length})</option>
+              {obras.map(o => (
+                <option key={o[0]} value={o[0]}>🚧 {o[1]}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Filtrar Estado */}
+          <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold">
+            <button
+              type="button"
+              onClick={() => setMonthlyFilterStatus('all')}
+              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                monthlyFilterStatus === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Todas ({monthTasks.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setMonthlyFilterStatus('pending')}
+              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                monthlyFilterStatus === 'pending' ? 'bg-white text-amber-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Pendientes ({monthStats.pending})
+            </button>
+            <button
+              type="button"
+              onClick={() => setMonthlyFilterStatus('completed')}
+              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                monthlyFilterStatus === 'completed' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Completadas ({monthStats.completed})
+            </button>
+          </div>
+
+          {/* Sub-selector: Matriz vs Calendario */}
+          <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setMonthlyQuadrantMode('matriz')}
+              title="Ver en formato cuadrante de obras horizontal"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                monthlyQuadrantMode === 'matriz' ? 'bg-amber-500 text-slate-950 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Table className="w-3.5 h-3.5" />
+              <span>Matriz por Obras</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMonthlyQuadrantMode('calendario')}
+              title="Ver en formato cuadrícula mensual de calendario"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                monthlyQuadrantMode === 'calendario' ? 'bg-amber-500 text-slate-950 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <CalendarDays className="w-3.5 h-3.5" />
+              <span>Cuadrícula Calendario</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Tarjeta de Métricas del Mes */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
+        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Actividades</p>
+          <p className="text-xl font-black text-slate-900 mt-0.5">{monthStats.total}</p>
+        </div>
+        <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-100">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">Completadas</p>
+          <p className="text-xl font-black text-emerald-700 mt-0.5">{monthStats.completed}</p>
+        </div>
+        <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-100">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-amber-600">Pendientes / Repasos</p>
+          <p className="text-xl font-black text-amber-700 mt-0.5">{monthStats.pending}</p>
+        </div>
+        <div className="bg-slate-900 text-white p-3 rounded-xl border border-slate-800">
+          <div className="flex justify-between items-center">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Progreso</p>
+            <span className="text-xs font-black text-amber-400">{monthStats.pct}%</span>
+          </div>
+          <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mt-2">
+            <div className="bg-amber-500 h-full rounded-full transition-all duration-500" style={{ width: `${monthStats.pct}%` }} />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* VISTA A: CUADRANTE MATRIZ POR OBRAS */}
+    {monthlyQuadrantMode === 'matriz' && (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-slate-50/60">
+          <div>
+            <h3 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+              <Table className="w-4 h-4 text-amber-500" />
+              Cuadrante Mensual de Actividades por Obra — {MESES[monthViewDate.getMonth()]} {monthViewDate.getFullYear()}
+            </h3>
+            <p className="text-xs text-slate-500">Desplaza horizontalmente para ver todos los {daysOfMonthList.length} días del mes. Haz clic en una casilla para añadir actividades o en el encabezado para saltar a la semana.</p>
+          </div>
+          <div className="text-xs text-slate-400 italic">
+            💡 Haz clic en el número de cualquier día para abrir su semana en vista semanal
+          </div>
+        </div>
+
+        {/* Scroll Horizontal del Cuadrante */}
+        <div className="overflow-x-auto max-w-full">
+          <table className="w-full border-collapse text-left min-w-max">
+            <thead>
+              <tr className="bg-slate-100 text-slate-700 text-xs border-b border-slate-200">
+                {/* Columna Fija de Obra */}
+                <th className="sticky left-0 z-20 bg-slate-100 p-3.5 border-r border-slate-200 font-extrabold uppercase tracking-wider min-w-[210px] max-w-[240px] shadow-xs">
+                  Obra / Proyecto
+                </th>
+                {/* Columnas de los Días del Mes */}
+                {daysOfMonthList.map((day) => {
+                  const isToday = day.dateStr === todayExactDate;
+                  return (
+                    <th
+                      key={day.dateStr}
+                      className={`p-2.5 text-center border-r border-slate-200 min-w-[130px] max-w-[170px] transition-colors ${
+                        day.isWeekend ? 'bg-slate-100/80 text-slate-400' : 'bg-slate-100 text-slate-700'
+                      } ${isToday ? 'bg-amber-100/90 text-amber-950 font-black' : ''}`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => jumpToWeekFromDate(day.dateStr)}
+                        title={`Ir a la vista semanal de esta fecha (${day.dateStr})`}
+                        className="w-full flex flex-col items-center justify-center group cursor-pointer hover:opacity-80"
+                      >
+                        <span className={`text-[10px] font-bold uppercase tracking-wider ${isToday ? 'text-amber-800' : 'text-slate-400 group-hover:text-amber-600'}`}>
+                          {day.dayNameShort}
+                        </span>
+                        <span className={`text-base font-black leading-tight rounded-md px-1.5 py-0.5 mt-0.5 ${
+                          isToday ? 'bg-amber-500 text-slate-950 shadow-2xs' : 'group-hover:bg-slate-200'
+                        }`}>
+                          {day.dayNum}
+                        </span>
+                      </button>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-xs">
+              {displayedObras.length === 0 ? (
+                <tr>
+                  <td colSpan={daysOfMonthList.length + 1} className="p-8 text-center text-slate-400">
+                    No hay obras cargadas en el sistema.
+                  </td>
+                </tr>
+              ) : (
+                displayedObras.map((obra) => {
+                  const obraId = obra[0];
+                  const obraNombre = obra[1];
+                  const obraColor = getObraColor(obraId, obras);
+                  const obraTasksInMonth = monthTasks.filter(t => t.obra_id === obraId);
+                  const obraCompletedCount = obraTasksInMonth.filter(t => t.completada).length;
+                  const obraPct = obraTasksInMonth.length > 0 ? Math.round((obraCompletedCount / obraTasksInMonth.length) * 100) : 0;
+
+                  return (
+                    <tr key={obraId} className="hover:bg-slate-50/40 transition-colors">
+                      {/* Celda fija de la obra */}
+                      <td 
+                        className="sticky left-0 z-10 bg-white p-3.5 border-r border-slate-200 shadow-xs min-w-[210px] max-w-[240px] align-top"
+                        style={{ borderLeft: `6px solid ${obraColor.border}` }}
+                      >
+                        <div className="font-extrabold text-slate-900 text-sm leading-snug truncate" title={obraNombre}>
+                          {obraNombre}
+                        </div>
+                        <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                          <span>{obraTasksInMonth.length} {obraTasksInMonth.length === 1 ? 'actividad' : 'actividades'}</span>
+                          {obraTasksInMonth.length > 0 && (
+                            <span className="font-bold text-slate-700">{obraPct}%</span>
+                          )}
+                        </div>
+                        {obraTasksInMonth.length > 0 && (
+                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mt-1.5">
+                            <div className="h-full rounded-full transition-all duration-300" style={{ width: `${obraPct}%`, backgroundColor: obraColor.border }} />
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenNewTaskForDateAndObra(daysOfMonthList[0]?.dateStr || '', obraId)}
+                          className="mt-3 text-[11px] font-bold text-amber-600 hover:text-amber-800 flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Añadir a esta obra
+                        </button>
+                      </td>
+
+                      {/* Celdas de cada día del mes */}
+                      {daysOfMonthList.map((day) => {
+                        const cellTasks = tasksByObraAndDate[obraId]?.[day.dateStr] || [];
+                        const isToday = day.dateStr === todayExactDate;
+
+                        return (
+                          <td
+                            key={day.dateStr}
+                            className={`p-2 border-r border-slate-200 align-top min-w-[130px] max-w-[170px] transition-colors relative group/cell ${
+                              day.isWeekend ? 'bg-slate-50/60' : 'bg-white'
+                            } ${isToday ? 'bg-amber-50/30' : ''}`}
+                          >
+                            <div className="space-y-1.5 min-h-[70px]">
+                              {cellTasks.map((task) => (
+                                <div
+                                  key={task.id}
+                                  className={`p-2 rounded-lg border text-left transition-all shadow-2xs group/card relative ${
+                                    task.completada
+                                      ? 'bg-slate-50 border-slate-200 text-slate-400'
+                                      : 'bg-white border-slate-200 hover:border-amber-400 hover:shadow-xs'
+                                  }`}
+                                >
+                                  {/* Cabecera de la mini tarjeta: Gremio y Checkbox */}
+                                  <div className="flex items-center justify-between gap-1 mb-1">
+                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${getGremioTagClasses(task.gremio, task.completada)}`}>
+                                      {task.gremio}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleComplete(task)}
+                                      title={task.completada ? 'Marcar pendiente' : 'Marcar completada'}
+                                      className="cursor-pointer shrink-0"
+                                    >
+                                      {task.completada ? (
+                                        <CheckSquare className="w-4 h-4 text-emerald-600" />
+                                      ) : (
+                                        <Square className="w-4 h-4 text-slate-300 hover:text-amber-500" />
+                                      )}
+                                    </button>
+                                  </div>
+
+                                  {/* Actividad */}
+                                  <p className={`font-semibold text-xs leading-snug line-clamp-2 ${task.completada ? 'line-through text-slate-400' : 'text-slate-800'}`}>
+                                    {task.actividad}
+                                  </p>
+
+                                  {/* Notas si existen */}
+                                  {task.notas && (
+                                    <p className="text-[10px] text-slate-500 italic mt-1 line-clamp-1" title={task.notas}>
+                                      💡 {task.notas}
+                                    </p>
+                                  )}
+
+                                  {/* Botón flotante para editar */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingTask(task)}
+                                    title="Editar actividad"
+                                    className="absolute bottom-1 right-1 opacity-0 group-hover/card:opacity-100 p-1 text-slate-400 hover:text-amber-600 transition-opacity bg-white/90 rounded cursor-pointer"
+                                  >
+                                    <Edit className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+
+                              {/* Botón añadir en celda vacía o al final */}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenNewTaskForDateAndObra(day.dateStr, obraId)}
+                                title={`Programar actividad para el ${day.dayNum} de ${MESES[monthViewDate.getMonth()]}`}
+                                className={`w-full py-1 rounded border border-dashed border-slate-200 text-slate-400 hover:border-amber-400 hover:text-amber-600 hover:bg-amber-50/50 flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                                  cellTasks.length === 0 ? 'opacity-0 group-hover/cell:opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                }`}
+                              >
+                                <Plus className="w-3 h-3" />
+                                <span className="text-[10px] font-bold">Añadir</span>
+                              </button>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+
+    {/* VISTA B: CUADRÍCULA CALENDARIO MENSUAL POR OBRAS */}
+    {monthlyQuadrantMode === 'calendario' && (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 sm:p-6 space-y-4">
+        <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+          <div>
+            <h3 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-amber-500" />
+              Vista Calendario — {MESES[monthViewDate.getMonth()]} {monthViewDate.getFullYear()}
+            </h3>
+            <p className="text-xs text-slate-500">Actividades de cada día agrupadas y categorizadas por obra</p>
+          </div>
+        </div>
+
+        {/* Cabecera de 7 días */}
+        <div className="grid grid-cols-7 gap-2 text-center">
+          {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map((d, i) => (
+            <div key={d} className={`text-xs font-black uppercase tracking-wider py-2 rounded-lg ${
+              i >= 5 ? 'bg-slate-100/60 text-slate-400' : 'bg-slate-100 text-slate-700'
+            }`}>
+              {d}
+            </div>
+          ))}
+        </div>
+
+        {/* Celdas del mes distribuidas por semanas */}
+        <div className="grid grid-cols-7 gap-2">
+          {(() => {
+            // Generar cuadrícula completa con trailing y leading days
+            const y = monthViewDate.getFullYear();
+            const m = monthViewDate.getMonth();
+            const firstDay = new Date(y, m, 1, 12);
+            const firstDayWeekday = (firstDay.getDay() + 6) % 7; // 0=Lun, 6=Dom
+            const daysInMonth = new Date(y, m + 1, 0).getDate();
+            const daysInPrev = new Date(y, m, 0).getDate();
+
+            const cells = [];
+            // Prev month
+            for (let i = firstDayWeekday - 1; i >= 0; i--) {
+              const dNum = daysInPrev - i;
+              const dateObj = new Date(y, m - 1, dNum, 12);
+              const dateStr = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+              cells.push({ dateStr, dayNum: dNum, isCurrentMonth: false, dateObj });
+            }
+            // Current month
+            for (let dNum = 1; dNum <= daysInMonth; dNum++) {
+              const dateObj = new Date(y, m, dNum, 12);
+              const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+              cells.push({ dateStr, dayNum: dNum, isCurrentMonth: true, dateObj });
+            }
+            // Next month fill to multiple of 7
+            const total = Math.ceil(cells.length / 7) * 7;
+            const remaining = total - cells.length;
+            for (let dNum = 1; dNum <= remaining; dNum++) {
+              const dateObj = new Date(y, m + 1, dNum, 12);
+              const dateStr = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+              cells.push({ dateStr, dayNum: dNum, isCurrentMonth: false, dateObj });
+            }
+
+            return cells.map((cell) => {
+              const dayTasks = monthTasks.filter(t => getTaskExactDate(t) === cell.dateStr);
+              const isToday = cell.dateStr === todayExactDate;
+              // Agrupar tareas por obra
+              const tasksByObraInCell = {};
+              dayTasks.forEach(t => {
+                if (!tasksByObraInCell[t.obra_id]) tasksByObraInCell[t.obra_id] = [];
+                tasksByObraInCell[t.obra_id].push(t);
+              });
+
+              return (
+                <div
+                  key={cell.dateStr}
+                  className={`min-h-[140px] rounded-xl border p-2 flex flex-col justify-between transition-all ${
+                    !cell.isCurrentMonth
+                      ? 'bg-slate-50/40 border-slate-100 text-slate-300'
+                      : isToday
+                      ? 'bg-amber-50/40 border-amber-300 ring-2 ring-amber-400'
+                      : 'bg-white border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <div>
+                    {/* Cabecera del día */}
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className={`text-sm font-black ${
+                        isToday ? 'text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded' : cell.isCurrentMonth ? 'text-slate-800' : 'text-slate-300'
+                      }`}>
+                        {cell.dayNum}
+                      </span>
+                      {cell.isCurrentMonth && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenNewTaskForDateAndObra(cell.dateStr)}
+                          title="Añadir actividad este día"
+                          className="p-1 text-slate-400 hover:text-amber-600 hover:bg-slate-100 rounded cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Tareas agrupadas por obra */}
+                    <div className="space-y-2">
+                      {Object.keys(tasksByObraInCell).map((obraId) => {
+                        const oColor = getObraColor(obraId, obras);
+                        const oName = obras.find(o => o[0] === obraId)?.[1] || 'Obra';
+                        const oTasks = tasksByObraInCell[obraId];
+
+                        return (
+                          <div key={obraId} className="space-y-1">
+                            {/* Etiqueta de la obra */}
+                            <div className="flex items-center gap-1 text-[10px] font-extrabold truncate" style={{ color: oColor.text }}>
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: oColor.border }} />
+                              <span className="truncate">{oName}</span>
+                            </div>
+
+                            {/* Actividades de esa obra */}
+                            {oTasks.map(task => (
+                              <div
+                                key={task.id}
+                                className={`p-1.5 rounded-md border text-left text-xs ${
+                                  task.completada
+                                    ? 'bg-slate-50 border-slate-200 text-slate-400 line-through'
+                                    : 'bg-white border-slate-200 hover:border-amber-300 shadow-2xs'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className={`text-[8px] font-bold px-1 rounded uppercase ${getGremioTagClasses(task.gremio, task.completada)}`}>
+                                    {task.gremio}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleComplete(task)}
+                                    className="cursor-pointer shrink-0"
+                                  >
+                                    {task.completada ? (
+                                      <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
+                                    ) : (
+                                      <Square className="w-3.5 h-3.5 text-slate-300 hover:text-amber-500" />
+                                    )}
+                                  </button>
+                                </div>
+                                <p className="font-semibold text-[11px] mt-0.5 line-clamp-2 leading-tight">
+                                  {task.actividad}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {cell.isCurrentMonth && dayTasks.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => jumpToWeekFromDate(cell.dateStr)}
+                      className="mt-2 text-[10px] font-bold text-amber-600 hover:text-amber-800 text-left cursor-pointer"
+                    >
+                      → Ver semana
+                    </button>
+                  )}
+                </div>
+              );
+            });
+          })()}
+        </div>
+      </div>
+    )}
+  </div>
+)}
 {/* MODAL: SMART VOICE DICTATION */}
 {isDictatingModalOpen && (
 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
