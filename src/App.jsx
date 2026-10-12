@@ -41,7 +41,7 @@ Tag,
 LogOut,
 ShieldCheck
 } from 'lucide-react';
-import { migrateLocalDataToFirestore, setUserContext } from './services/db.js';
+import { migrateLocalDataToFirestore, setUserContext, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio } from './services/db.js';
 import { onAuthUserChange, logout, CORPORATE_DOMAIN } from './services/auth.js';
 import { AuthView } from './components/AuthView.jsx';
 // EMBEDDED DATABASES ID
@@ -52,6 +52,7 @@ const MESES = [
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
 ];
 const GREMIOS_PREDEFINIDOS = [
+  'ENUE',
   'Albañilería', 'Estructura', 'Pintura', 'Fontanería', 'Electricidad',
   'Pladur / Yeso', 'Climatización', 'Carpintería', 'Instalaciones',
   'Limpieza', 'Cerramientos', 'Jardinería / Exteriores', 'Otros'
@@ -59,6 +60,7 @@ const GREMIOS_PREDEFINIDOS = [
 const getGremioTagClasses = (gremio, completada = false) => {
   if (completada) return 'bg-slate-100 text-slate-400';
   const clasesPorGremio = {
+    'ENUE': 'bg-amber-100 text-amber-900 border border-amber-300 font-bold',
     'Albañilería': 'bg-blue-100 text-blue-800',
     'Estructura': 'bg-violet-100 text-violet-800',
     'Pintura': 'bg-pink-100 text-pink-800',
@@ -73,7 +75,7 @@ const getGremioTagClasses = (gremio, completada = false) => {
     'Jardinería / Exteriores': 'bg-lime-100 text-lime-800',
     'Otros': 'bg-slate-100 text-slate-700'
   };
-  return clasesPorGremio[gremio] || clasesPorGremio['Otros'];
+  return clasesPorGremio[gremio] || 'bg-teal-50 text-teal-800 border border-teal-200 font-semibold';
 };
 // Helper to format ISO dates
 const getMonday = (d) => {
@@ -275,10 +277,20 @@ const [manualTask, setManualTask] = useState({
 dia_semana: 'Lunes',
 fecha_semana: '',
 actividad: '',
-gremio: 'Albañilería',
+gremio: 'ENUE',
 obra_id: '',
 notas: ''
 });
+const [customGremios, setCustomGremios] = useState([]);
+const [isManageGremiosModalOpen, setIsManageGremiosModalOpen] = useState(false);
+const [newGremioName, setNewGremioName] = useState('');
+const [gremioTargetContext, setGremioTargetContext] = useState(null); // 'manual' | 'edit'
+
+const allGremios = useMemo(() => {
+  const customNames = (customGremios || []).map(cg => typeof cg === 'string' ? cg : cg.nombre).filter(Boolean);
+  const set = new Set([...GREMIOS_PREDEFINIDOS, ...customNames]);
+  return Array.from(set);
+}, [customGremios]);
 const [editingTask, setEditingTask] = useState(null);
 const [moveTask, setMoveTask] = useState(null);
 const [moveTargetWeek, setMoveTargetWeek] = useState(currentWeekMonday);
@@ -396,6 +408,16 @@ useEffect(() => {
 
   return () => unsubAuth();
 }, [loadData]);
+
+// Escucha en tiempo real de gremios y subcontratistas compartidos en Firestore
+useEffect(() => {
+  const unsubGremios = subscribeToSharedGremios((list) => {
+    setCustomGremios(list);
+  });
+  return () => {
+    if (unsubGremios) unsubGremios();
+  };
+}, []);
 
 // Database Sync Event listeners
 useEffect(() => {
@@ -760,6 +782,38 @@ setSuccessMessage('Obra y todas sus tareas asociadas eliminadas correctamente.')
 await loadData();
 setError('Error al eliminar la obra: ' + err.message);
 }
+};
+
+// Crear Gremio / Subcontratista compartido globalmente para todos los usuarios
+const handleCreateGremio = async (e) => {
+  if (e) e.preventDefault();
+  const trimmed = newGremioName.trim();
+  if (!trimmed) return;
+  try {
+    await createSharedGremio(trimmed, currentUser?.displayName || currentUser?.email);
+    if (gremioTargetContext === 'manual') {
+      setManualTask(prev => ({ ...prev, gremio: trimmed }));
+    } else if (gremioTargetContext === 'edit') {
+      setEditingTask(prev => ({ ...prev, gremio: trimmed }));
+    }
+    setNewGremioName('');
+    setIsManageGremiosModalOpen(false);
+    setGremioTargetContext(null);
+    setSuccessMessage(`Gremio / Subcontratista "${trimmed}" creado correctamente y disponible para todos los usuarios.`);
+  } catch (err) {
+    setError('Error al crear el gremio: ' + err.message);
+  }
+};
+
+// Eliminar Gremio compartido del catálogo corporativo
+const handleDeleteGremio = async (id, nombre) => {
+  if (!confirm(`¿Deseas eliminar permanentemente el gremio "${nombre}" del catálogo compartido de la empresa?`)) return;
+  try {
+    await deleteSharedGremio(id);
+    setSuccessMessage(`Gremio "${nombre}" eliminado del catálogo corporativo.`);
+  } catch (err) {
+    setError('Error al eliminar el gremio: ' + err.message);
+  }
 };
 // Add single manual task
 const handleAddManualTask = async (e) => {
@@ -2958,13 +3012,39 @@ className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
 </select>
 </div>
 <div>
-<label className="block text-xs font-bold text-slate-500 uppercase mb-1">Gremio / Subcontratista</label>
+<div className="flex justify-between items-center mb-1">
+  <label className="block text-xs font-bold text-slate-500 uppercase">Gremio / Subcontratista</label>
+  <button
+    type="button"
+    onClick={() => {
+      setGremioTargetContext('manual');
+      setIsManageGremiosModalOpen(true);
+    }}
+    className="text-[11px] font-bold text-amber-600 hover:text-amber-800 flex items-center gap-1 cursor-pointer bg-transparent border-none"
+  >
+    <Plus className="w-3 h-3" /> Crear / Gestionar
+  </button>
+</div>
 <select
 value={manualTask.gremio}
-onChange={(e) => setManualTask(prev => ({ ...prev, gremio: e.target.value }))}
+onChange={(e) => {
+  if (e.target.value === '__NEW__') {
+    setGremioTargetContext('manual');
+    setIsManageGremiosModalOpen(true);
+  } else {
+    setManualTask(prev => ({ ...prev, gremio: e.target.value }));
+  }
+}}
 className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
 >
-{GREMIOS_PREDEFINIDOS.map(g => <option key={g} value={g}>{g}</option>)}
+{allGremios.map(g => (
+  <option key={g} value={g}>
+    {g === 'ENUE' ? '🏢 ENUE (Propio)' : g}
+  </option>
+))}
+<option value="__NEW__" className="text-amber-600 font-bold">
+  ➕ Crear nuevo gremio / subcontratista...
+</option>
 </select>
 </div>
 <div>
@@ -3048,13 +3128,39 @@ className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
 </select>
 </div>
 <div>
-<label className="block text-xs font-bold text-slate-500 uppercase mb-1">Gremio / Subcontratista</label>
+<div className="flex justify-between items-center mb-1">
+  <label className="block text-xs font-bold text-slate-500 uppercase">Gremio / Subcontratista</label>
+  <button
+    type="button"
+    onClick={() => {
+      setGremioTargetContext('edit');
+      setIsManageGremiosModalOpen(true);
+    }}
+    className="text-[11px] font-bold text-amber-600 hover:text-amber-800 flex items-center gap-1 cursor-pointer bg-transparent border-none"
+  >
+    <Plus className="w-3 h-3" /> Crear / Gestionar
+  </button>
+</div>
 <select
 value={editingTask.gremio}
-onChange={(e) => setEditingTask(prev => ({ ...prev, gremio: e.target.value }))}
+onChange={(e) => {
+  if (e.target.value === '__NEW__') {
+    setGremioTargetContext('edit');
+    setIsManageGremiosModalOpen(true);
+  } else {
+    setEditingTask(prev => ({ ...prev, gremio: e.target.value }));
+  }
+}}
 className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
 >
-{GREMIOS_PREDEFINIDOS.map(g => <option key={g} value={g}>{g}</option>)}
+{allGremios.map(g => (
+  <option key={g} value={g}>
+    {g === 'ENUE' ? '🏢 ENUE (Propio)' : g}
+  </option>
+))}
+<option value="__NEW__" className="text-amber-600 font-bold">
+  ➕ Crear nuevo gremio / subcontratista...
+</option>
 </select>
 </div>
 <div>
@@ -3790,6 +3896,147 @@ Listo / Cerrar
 </div>
 </div>
 )}
+{/* MODAL: GESTIONAR GREMIOS Y SUBCONTRATISTAS (COMPARTIDO GLOBAL) */}
+{isManageGremiosModalOpen && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
+      {/* Header */}
+      <div className="bg-slate-900 text-white p-5 flex justify-between items-center">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center font-bold">
+            <Users className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="font-bold text-base text-white">Gestionar Gremios / Subcontratistas</h3>
+            <p className="text-[11px] text-slate-400 font-medium">Catálogo sincronizado para todos los usuarios de ENUE</p>
+          </div>
+        </div>
+        <button 
+          onClick={() => {
+            setIsManageGremiosModalOpen(false);
+            setGremioTargetContext(null);
+          }} 
+          className="text-slate-400 hover:text-white p-1 rounded-lg hover:cursor-pointer border-none bg-transparent"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="p-6 overflow-y-auto space-y-6 flex-1">
+        <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-3.5 text-xs text-amber-900 flex items-start gap-2.5">
+          <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold">Catálogo compartido en tiempo real</p>
+            <p className="text-amber-800 text-[11px] mt-0.5">
+              Cualquier nuevo gremio o empresa subcontratista que crees aquí estará disponible al instante para todos los compañeros y en todas las obras de la empresa.
+            </p>
+          </div>
+        </div>
+
+        {/* Formulario para añadir nuevo gremio */}
+        <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl">
+          <h4 className="text-xs font-bold text-slate-600 uppercase mb-2 tracking-wide flex items-center gap-1.5">
+            <Plus className="w-3.5 h-3.5 text-amber-600" />
+            <span>Crear Nuevo Gremio o Subcontratista</span>
+          </h4>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newGremioName}
+              onChange={(e) => setNewGremioName(e.target.value)}
+              placeholder="Nombre del gremio o empresa (ej: Carpintería Metálica, Solados...)"
+              className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreateGremio(e); }}
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={handleCreateGremio}
+              disabled={!newGremioName.trim()}
+              className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-bold px-4 py-2 rounded-lg text-xs flex items-center gap-1.5 hover:cursor-pointer transition-all shrink-0 border-none shadow-xs"
+            >
+              <Plus className="w-3.5 h-3.5" /> Guardar
+            </button>
+          </div>
+        </div>
+
+        {/* Gremios Personalizados Compartidos */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+              Gremios Creados por el Equipo ({customGremios.length})
+            </h4>
+          </div>
+          {customGremios.length === 0 ? (
+            <div className="border border-dashed border-slate-200 rounded-xl p-4 text-center text-xs text-slate-400">
+              No hay gremios personalizados creados aún. Escribe uno arriba para añadirlo al catálogo compartido.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white">
+              {customGremios.map((g) => {
+                const id = g.id;
+                const nombre = g.nombre;
+                const creadoPor = g.creado_por || 'Equipo ENUE';
+                return (
+                  <div key={id} className="p-3 flex items-center justify-between gap-3 hover:bg-slate-50/60 transition-all">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${getGremioTagClasses(nombre)}`}>
+                        {nombre}
+                      </span>
+                      <span className="text-[11px] text-slate-400 truncate">
+                        (creado por {creadoPor})
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteGremio(id, nombre)}
+                      className="bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-400 p-1.5 rounded-lg hover:cursor-pointer transition-all border border-slate-200 shrink-0"
+                      title={`Eliminar "${nombre}"`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Gremios Predefinidos del Sistema */}
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 uppercase mb-2 tracking-wider">
+            Gremios Base Predefinidos ({GREMIOS_PREDEFINIDOS.length})
+          </h4>
+          <div className="flex flex-wrap gap-1.5 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+            {GREMIOS_PREDEFINIDOS.map((g) => (
+              <span
+                key={g}
+                className={`text-[10px] font-bold px-2 py-1 rounded-md uppercase tracking-wider ${getGremioTagClasses(g)}`}
+              >
+                {g === 'ENUE' ? '⭐ ENUE (Empresa)' : g}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-end">
+        <button
+          type="button"
+          onClick={() => {
+            setIsManageGremiosModalOpen(false);
+            setGremioTargetContext(null);
+          }}
+          className="bg-slate-900 border border-slate-800 hover:bg-slate-800 text-white px-5 py-2 text-sm font-semibold rounded-xl hover:cursor-pointer transition-all"
+        >
+          Listo / Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+)}
 {/* MODAL: CALENDARIO EN GRANDE / SELECTOR DE FECHA */}
 {isCalendarModalOpen && (
   <div 
@@ -4456,7 +4703,7 @@ return (
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700"
                 >
                   <option value="all">👥 Todos los gremios</option>
-                  {GREMIOS_PREDEFINIDOS.map(g => (
+                  {allGremios.map(g => (
                     <option key={g} value={g}>{g}</option>
                   ))}
                 </select>

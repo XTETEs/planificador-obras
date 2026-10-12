@@ -689,3 +689,72 @@ export async function migrateLocalDataToFirestore() {
     return { success: false, message: 'Error durante la migración: ' + err.message };
   }
 }
+
+const STORAGE_SHARED_GREMIOS_KEY = 'enue_shared_gremios';
+
+/**
+ * Suscribe a los gremios/subcontratistas compartidos en Firestore en tiempo real.
+ */
+export function subscribeToSharedGremios(callback) {
+  let initial = [];
+  try {
+    const raw = localStorage.getItem(STORAGE_SHARED_GREMIOS_KEY);
+    if (raw) initial = JSON.parse(raw);
+  } catch (e) {}
+
+  if (initial.length > 0) {
+    try { callback(initial); } catch (e) {}
+  }
+
+  const gremiosCol = collection(firestore, 'gremios');
+  const unsub = onSnapshot(gremiosCol, (snap) => {
+    const list = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data();
+      list.push({
+        id: docSnap.id,
+        nombre: d.nombre || docSnap.id,
+        creado_por: d.creado_por || '',
+        fecha_creado: d.fecha_creado || ''
+      });
+    });
+    list.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+    try {
+      localStorage.setItem(STORAGE_SHARED_GREMIOS_KEY, JSON.stringify(list));
+    } catch (e) {}
+    callback(list);
+  }, (err) => {
+    console.warn('Error escuchando gremios compartidos:', err);
+  });
+
+  return unsub;
+}
+
+/**
+ * Añade un nuevo gremio / subcontratista compartido para todos los usuarios.
+ */
+export async function createSharedGremio(nombre, createdBy = '') {
+  const cleanNombre = (nombre || '').trim();
+  if (!cleanNombre) {
+    throw new Error('El nombre del gremio o subcontratista no puede estar vacío.');
+  }
+  // Generar ID seguro
+  const id = 'g_' + cleanNombre.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 50) + '_' + Date.now().toString(36);
+  const data = {
+    id,
+    nombre: cleanNombre,
+    creado_por: createdBy || 'Usuario Corporativo',
+    fecha_creado: new Date().toISOString()
+  };
+  await setDoc(doc(firestore, 'gremios', id), data);
+  return data;
+}
+
+/**
+ * Elimina un gremio compartido de Firestore.
+ */
+export async function deleteSharedGremio(id) {
+  if (!id) return;
+  await deleteDoc(doc(firestore, 'gremios', String(id)));
+}
+
