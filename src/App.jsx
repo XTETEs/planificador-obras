@@ -31,7 +31,12 @@ Table,
 Filter,
 CalendarDays,
 CheckCircle2,
-Clock
+Clock,
+AlertTriangle,
+FileSpreadsheet,
+History,
+CalendarRange,
+ArrowRight
 } from 'lucide-react';
 import { migrateLocalDataToFirestore } from './services/db.js';
 // EMBEDDED DATABASES ID
@@ -156,6 +161,48 @@ const getTaskExactDate = (task) => {
   return `${y}-${m}-${day}`;
 };
 
+const MOTIVOS_NO_EJECUCION = [
+  'Falta de material / Suministros',
+  'Subcontrata / Gremio no comparece',
+  'Condiciones climáticas adversas / Lluvia',
+  'Retraso en fase o gremio predecesor',
+  'Modificación de proyecto / Instrucción de Dirección',
+  'Incidencia de seguridad / Falta de protecciones',
+  'Falta de permisos / Acceso a zona de trabajo',
+  'Prioridad cambiada a otra zona u obra',
+  'Otro motivo'
+];
+
+// Parser y Serializador para el Historial de Incidencias / Aplazamientos dentro de task.notas
+const parseTaskNotas = (rawNotas) => {
+  if (!rawNotas || typeof rawNotas !== 'string') {
+    return { userNotas: '', aplazamientos: [] };
+  }
+  const match = rawNotas.match(/\[HISTORIAL_APLAZAMIENTOS:\s*(\[[\s\S]*?\])\s*\]/);
+  if (!match) {
+    return { userNotas: rawNotas.trim(), aplazamientos: [] };
+  }
+  try {
+    const aplazamientos = JSON.parse(match[1]);
+    const userNotas = rawNotas.replace(match[0], '').trim();
+    return {
+      userNotas,
+      aplazamientos: Array.isArray(aplazamientos) ? aplazamientos : []
+    };
+  } catch (e) {
+    return { userNotas: rawNotas.trim(), aplazamientos: [] };
+  }
+};
+
+const serializeTaskNotas = (userNotas, aplazamientos = []) => {
+  const cleanUserNotas = (userNotas || '').trim();
+  if (!aplazamientos || aplazamientos.length === 0) {
+    return cleanUserNotas;
+  }
+  const serializedHistory = `[HISTORIAL_APLAZAMIENTOS: ${JSON.stringify(aplazamientos)}]`;
+  return cleanUserNotas ? `${cleanUserNotas}\n\n${serializedHistory}` : serializedHistory;
+};
+
 function App() {
 const [db] = useState(() => AiKit.db(DB_ID, { live: true }));
 // State
@@ -212,6 +259,33 @@ const [targetCopyDay, setTargetCopyDay] = useState('Lunes');
 const [draggedTask, setDraggedTask] = useState(null);
 const [dragOverDay, setDragOverDay] = useState(null);
 const [openTaskMenuId, setOpenTaskMenuId] = useState(null);
+// State for Postponing / Incident Registration (No ejecutada)
+const [isPostponeModalOpen, setIsPostponeModalOpen] = useState(false);
+const [postponeTask, setPostponeTask] = useState(null);
+const [postponeMotivo, setPostponeMotivo] = useState(MOTIVOS_NO_EJECUCION[0]);
+const [postponeDetalle, setPostponeDetalle] = useState('');
+const [postponeTargetWeek, setPostponeTargetWeek] = useState(currentWeekMonday);
+const [postponeTargetDay, setPostponeTargetDay] = useState('Lunes');
+// State for viewing detailed postponement history of a task
+const [selectedTaskHistory, setSelectedTaskHistory] = useState(null);
+// State for Incident / Postponement Report Modal
+const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+const [reportPeriodType, setReportPeriodType] = useState('mensual'); // 'semanal', 'quincenal', 'mensual', 'personalizado'
+const [reportWeek, setReportWeek] = useState(() => currentWeekMonday);
+const [reportMonth, setReportMonth] = useState(() => new Date().getMonth());
+const [reportYear, setReportYear] = useState(() => new Date().getFullYear());
+const [reportQuincena, setReportQuincena] = useState(1); // 1 (1-15) or 2 (16-fin)
+const [reportCustomStart, setReportCustomStart] = useState(() => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+});
+const [reportCustomEnd, setReportCustomEnd] = useState(() => {
+  const d = new Date();
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+});
+const [reportObraId, setReportObraId] = useState('all');
+const [reportGremio, setReportGremio] = useState('all');
 // New Construction site state
 const [newObraNombre, setNewObraNombre] = useState('');
 const [isManageObrasModalOpen, setIsManageObrasModalOpen] = useState(false);
@@ -665,6 +739,7 @@ setError('La descripción de la actividad no puede estar vacía.');
 return;
 }
 try {
+const finalNotas = serializeTaskNotas(editingTask.notas, editingTask._aplazamientos || []);
 await db.exec(
 'UPDATE tareas SET obra_id = ?, dia_semana = ?, actividad = ?, gremio = ?, notas = ? WHERE id = ?',
 [
@@ -672,7 +747,7 @@ editingTask.obra_id,
 editingTask.dia_semana,
 editingTask.actividad.trim(),
 editingTask.gremio,
-(editingTask.notas || '').trim(),
+finalNotas,
 editingTask.id
 ]
 );
@@ -683,7 +758,7 @@ obra_id: editingTask.obra_id,
 dia_semana: editingTask.dia_semana,
 actividad: editingTask.actividad.trim(),
 gremio: editingTask.gremio,
-notas: (editingTask.notas || '').trim(),
+notas: finalNotas,
 obra_nombre: matchedObra ? matchedObra[1] : 'Obra Desconocida'
 };
 setTareas(prev => prev.map(task => task.id === editingTask.id ? { ...task, ...updatedTask } : task));
@@ -760,6 +835,207 @@ setSuccessMessage(`Copia creada para la semana del ${formatFriendlyDate(normaliz
 setError('Error al copiar actividad: ' + err.message);
 }
 };
+
+// Open Postpone / Non-execution Modal for a task
+const handleOpenPostponeModal = (task) => {
+  setPostponeTask(task);
+  setPostponeMotivo(MOTIVOS_NO_EJECUCION[0]);
+  setPostponeDetalle('');
+  const taskWeek = task.fecha_semana || currentWeekMonday;
+  const parts = taskWeek.split('-').map(Number);
+  const nextWeekDate = new Date(parts[0], parts[1] - 1, parts[2] + 7, 12);
+  const nextMonday = getMonday(nextWeekDate);
+  setPostponeTargetWeek(nextMonday);
+  setPostponeTargetDay(task.dia_semana || 'Lunes');
+  setIsPostponeModalOpen(true);
+};
+
+// Confirm Postpone and Register Incident
+const handleConfirmPostpone = async (e) => {
+  if (e) e.preventDefault();
+  if (!postponeTask) return;
+  if (!postponeMotivo.trim()) {
+    setError('Por favor, selecciona o indica el motivo de no ejecución.');
+    return;
+  }
+
+  const { userNotas, aplazamientos } = parseTaskNotas(postponeTask.notas);
+  const currentExactDate = getTaskExactDate(postponeTask);
+  
+  const targetMonday = getMonday(postponeTargetWeek);
+  const dayOffset = DIAS_SEMANA_OFFSET[postponeTargetDay] ?? 0;
+  const mParts = targetMonday.split('-').map(Number);
+  const targetDateObj = new Date(mParts[0], mParts[1] - 1, mParts[2] + dayOffset, 12);
+  const targetExactDate = `${targetDateObj.getFullYear()}-${String(targetDateObj.getMonth() + 1).padStart(2, '0')}-${String(targetDateObj.getDate()).padStart(2, '0')}`;
+
+  const newIncident = {
+    id: 'apl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    fecha_anterior: currentExactDate,
+    dia_anterior: postponeTask.dia_semana,
+    fecha_nueva: targetExactDate,
+    dia_nuevo: postponeTargetDay,
+    motivo: postponeMotivo.trim(),
+    detalle: (postponeDetalle || '').trim(),
+    fecha_registro: new Date().toISOString()
+  };
+
+  const updatedAplazamientos = [...aplazamientos, newIncident];
+  const newRawNotas = serializeTaskNotas(userNotas, updatedAplazamientos);
+
+  try {
+    await db.exec(
+      'UPDATE tareas SET fecha_semana = ?, dia_semana = ?, notas = ? WHERE id = ?',
+      [targetMonday, postponeTargetDay, newRawNotas, postponeTask.id]
+    );
+
+    const updatedTask = {
+      ...postponeTask,
+      fecha_semana: targetMonday,
+      dia_semana: postponeTargetDay,
+      notas: newRawNotas
+    };
+
+    if (targetMonday === currentWeekMonday) {
+      setTareas(prev => prev.map(t => t.id === postponeTask.id ? updatedTask : t));
+    } else {
+      setTareas(prev => prev.filter(t => t.id !== postponeTask.id));
+    }
+    setTodasLasTareas(prev => prev.map(t => t.id === postponeTask.id ? updatedTask : t));
+
+    setIsPostponeModalOpen(false);
+    setPostponeTask(null);
+    setPostponeMotivo(MOTIVOS_NO_EJECUCION[0]);
+    setPostponeDetalle('');
+    setError(null);
+    setSuccessMessage(`Incidencia registrada: Actividad no ejecutada y trasladada al ${postponeTargetDay} ${formatFriendlyDate(targetExactDate)}.`);
+  } catch (err) {
+    setError('Error al registrar el aplazamiento: ' + err.message);
+  }
+};
+
+// Calculate Start Date and End Date for the Report
+const getReportDateRange = useCallback(() => {
+  if (reportPeriodType === 'semanal') {
+    const monday = reportWeek || currentWeekMonday;
+    const parts = monday.split('-').map(Number);
+    const startObj = new Date(parts[0], parts[1] - 1, parts[2], 12);
+    const endObj = new Date(parts[0], parts[1] - 1, parts[2] + 6, 12); // Lunes a Domingo
+    const startDate = `${startObj.getFullYear()}-${String(startObj.getMonth() + 1).padStart(2, '0')}-${String(startObj.getDate()).padStart(2, '0')}`;
+    const endDate = `${endObj.getFullYear()}-${String(endObj.getMonth() + 1).padStart(2, '0')}-${String(endObj.getDate()).padStart(2, '0')}`;
+    return {
+      label: `Semana del ${formatFriendlyDate(startDate)} al ${formatFriendlyDate(endDate)}`,
+      startDate,
+      endDate
+    };
+  }
+
+  if (reportPeriodType === 'quincenal') {
+    const y = reportYear;
+    const m = reportMonth;
+    if (reportQuincena === 1) {
+      const startDate = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+      const endDate = `${y}-${String(m + 1).padStart(2, '0')}-15`;
+      return {
+        label: `1ª Quincena de ${MESES[m]} ${y} (1 al 15)`,
+        startDate,
+        endDate
+      };
+    } else {
+      const daysCount = new Date(y, m + 1, 0).getDate();
+      const startDate = `${y}-${String(m + 1).padStart(2, '0')}-16`;
+      const endDate = `${y}-${String(m + 1).padStart(2, '0')}-${String(daysCount).padStart(2, '0')}`;
+      return {
+        label: `2ª Quincena de ${MESES[m]} ${y} (16 al ${daysCount})`,
+        startDate,
+        endDate
+      };
+    }
+  }
+
+  if (reportPeriodType === 'mensual') {
+    const y = reportYear;
+    const m = reportMonth;
+    const daysCount = new Date(y, m + 1, 0).getDate();
+    const startDate = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+    const endDate = `${y}-${String(m + 1).padStart(2, '0')}-${String(daysCount).padStart(2, '0')}`;
+    return {
+      label: `Mes de ${MESES[m]} ${y}`,
+      startDate,
+      endDate
+    };
+  }
+
+  // Personalizado
+  return {
+    label: `Del ${formatFriendlyDate(reportCustomStart)} al ${formatFriendlyDate(reportCustomEnd)}`,
+    startDate: reportCustomStart,
+    endDate: reportCustomEnd
+  };
+}, [reportPeriodType, reportWeek, currentWeekMonday, reportYear, reportMonth, reportQuincena, reportCustomStart, reportCustomEnd]);
+
+// Compute report metrics and list of unexecuted / postponed tasks
+const reportData = useMemo(() => {
+  const { startDate, endDate } = getReportDateRange();
+  if (!startDate || !endDate) return { items: [], totalTasksInPeriod: 0, completedInPeriod: 0, motivesCount: {} };
+
+  const scopedTasks = todasLasTareas.filter(t => {
+    if (reportObraId !== 'all' && t.obra_id !== reportObraId) return false;
+    if (reportGremio !== 'all' && t.gremio !== reportGremio) return false;
+    return true;
+  });
+
+  const incidentItems = [];
+  const motivesCount = {};
+
+  scopedTasks.forEach(task => {
+    const { aplazamientos } = parseTaskNotas(task.notas);
+
+    aplazamientos.forEach((apl, idx) => {
+      const inPeriod = (apl.fecha_anterior >= startDate && apl.fecha_anterior <= endDate)
+        || (apl.fecha_nueva >= startDate && apl.fecha_nueva <= endDate);
+
+      if (inPeriod) {
+        incidentItems.push({
+          taskId: task.id,
+          task,
+          obra_id: task.obra_id,
+          obra_nombre: task.obra_nombre,
+          actividad: task.actividad,
+          gremio: task.gremio,
+          completada: task.completada,
+          fecha_anterior: apl.fecha_anterior,
+          dia_anterior: apl.dia_anterior,
+          fecha_nueva: apl.fecha_nueva,
+          dia_nuevo: apl.dia_nuevo,
+          motivo: apl.motivo,
+          detalle: apl.detalle,
+          fecha_registro: apl.fecha_registro,
+          total_aplazamientos: aplazamientos.length,
+          numero_intento: idx + 1
+        });
+
+        motivesCount[apl.motivo] = (motivesCount[apl.motivo] || 0) + 1;
+      }
+    });
+  });
+
+  // Baseline tasks planned for this period
+  const tasksInPeriod = scopedTasks.filter(t => {
+    const d = getTaskExactDate(t);
+    return d && d >= startDate && d <= endDate;
+  });
+
+    return {
+      items: incidentItems,
+      totalTasksInPeriod: tasksInPeriod.length,
+      completedInPeriod: tasksInPeriod.filter(t => t.completada).length,
+      motivesCount,
+      startDate,
+      endDate,
+      label: getReportDateRange().label
+    };
+}, [getReportDateRange, todasLasTareas, reportObraId, reportGremio]);
+
 // HTML5 drag-and-drop entre días
 const handleDragStart = (e, task) => {
 e.stopPropagation();
@@ -1042,6 +1318,16 @@ Planificador Semanal
 </div>
 </div>
 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+{/* Botón Informe de Repasos / Incidencias */}
+<button
+type="button"
+onClick={() => setIsReportModalOpen(true)}
+className="bg-white hover:bg-amber-50 hover:text-amber-800 text-slate-800 font-semibold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all border border-slate-200 shadow-2xs hover:border-amber-300 shrink-0 cursor-pointer"
+title="Generar informe semanal, quincenal o mensual de tareas no ejecutadas y repasos"
+>
+<FileSpreadsheet className="w-4 h-4 text-amber-500 shrink-0" />
+<span>Informe de Repasos</span>
+</button>
 {/* Dictate Button */}
 <button
 onClick={() => { setIsDictatingModalOpen(true); setParsedTasks([]); }}
@@ -1279,7 +1565,9 @@ className="text-xs text-amber-500 hover:text-amber-600 font-semibold mt-1 inline
 </button>
 </div>
 ) : (
-tasks.map((task) => (
+tasks.map((task) => {
+const { userNotas: cleanNotas, aplazamientos: taskAplazamientos } = parseTaskNotas(task.notas);
+return (
 <div
 key={task.id}
 className={`relative w-full min-h-[170px] p-5 rounded-xl border text-left transition-all group z-${openTaskMenuId === task.id ? '40' : '0'} ${
@@ -1299,8 +1587,12 @@ className="inline-flex items-center justify-center rounded-lg bg-slate-100 hover
 <MoreVertical className="w-4 h-4" />
 </button>
 {openTaskMenuId === task.id && (
-<div className="task-menu absolute right-0 top-11 w-36 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-<button type="button" onClick={() => { setEditingTask({ ...task }); setOpenTaskMenuId(null); }} className="w-full inline-flex items-center gap-2 rounded-lg bg-slate-100 hover:bg-amber-50 hover:text-amber-700 px-2.5 py-2 text-[11px] font-bold text-slate-600 hover:cursor-pointer"><Edit className="w-3.5 h-3.5" />Editar</button>
+<div className="task-menu absolute right-0 top-11 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl z-50">
+<button type="button" onClick={() => { setEditingTask({ ...task, notas: cleanNotas, _aplazamientos: taskAplazamientos }); setOpenTaskMenuId(null); }} className="w-full inline-flex items-center gap-2 rounded-lg bg-slate-100 hover:bg-amber-50 hover:text-amber-700 px-2.5 py-2 text-[11px] font-bold text-slate-600 hover:cursor-pointer"><Edit className="w-3.5 h-3.5" />Editar</button>
+<button type="button" onClick={() => { handleOpenPostponeModal(task); setOpenTaskMenuId(null); }} className="w-full mt-1 inline-flex items-center gap-2 rounded-lg bg-amber-50 hover:bg-amber-100 px-2.5 py-2 text-[11px] font-bold text-amber-900 hover:cursor-pointer"><AlertTriangle className="w-3.5 h-3.5 text-amber-600" />No ejecutada / Trasladar</button>
+{taskAplazamientos.length > 0 && (
+<button type="button" onClick={() => { setSelectedTaskHistory({ task, aplazamientos: taskAplazamientos }); setOpenTaskMenuId(null); }} className="w-full mt-1 inline-flex items-center gap-2 rounded-lg bg-slate-100 hover:bg-amber-50 hover:text-amber-700 px-2.5 py-2 text-[11px] font-bold text-slate-600 hover:cursor-pointer"><History className="w-3.5 h-3.5" />Ver Historial ({taskAplazamientos.length})</button>
+)}
 <button type="button" onClick={() => { setMoveTargetWeek(getMonday(task.fecha_semana)); setMoveTargetDay(task.dia_semana); setMoveTask({ ...task }); setOpenTaskMenuId(null); }} className="w-full mt-1 inline-flex items-center gap-2 rounded-lg bg-slate-100 hover:bg-amber-50 hover:text-amber-700 px-2.5 py-2 text-[11px] font-bold text-slate-600 hover:cursor-pointer"><ArrowRightLeft className="w-3.5 h-3.5" />Mover</button>
 <button type="button" onClick={() => { const nextWeek = new Date(task.fecha_semana); nextWeek.setDate(nextWeek.getDate() + 7); setCopyTargetWeek(getMonday(nextWeek)); setTargetCopyDay(task.dia_semana); setCopyingTask({ ...task }); setOpenTaskMenuId(null); }} className="w-full mt-1 inline-flex items-center gap-2 rounded-lg bg-slate-100 hover:bg-amber-50 hover:text-amber-700 px-2.5 py-2 text-[11px] font-bold text-slate-600 hover:cursor-pointer"><Copy className="w-3.5 h-3.5" />Copiar</button>
 <div className="my-1.5 border-t border-slate-200"></div>
@@ -1340,11 +1632,34 @@ className="text-slate-400 hover:text-amber-600 cursor-grab active:cursor-grabbin
 {task.gremio}
 </span>
 {selectedObraId === 'all' && <span className="text-xs font-semibold text-slate-500 flex items-center gap-1 min-w-0"><Building className="w-3.5 h-3.5 text-slate-400 shrink-0" /><span className="truncate">{task.obra_nombre}</span></span>}
+{taskAplazamientos.length > 0 && (
+<button
+type="button"
+onClick={(e) => { e.stopPropagation(); setSelectedTaskHistory({ task, aplazamientos: taskAplazamientos }); }}
+className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 transition-colors cursor-pointer"
+title={`No ejecutada en ${taskAplazamientos.length} ocasión(es). Clic para ver motivos.`}
+>
+<AlertTriangle className="w-3 h-3 text-amber-600" />
+<span>No ejecutada ({taskAplazamientos.length})</span>
+</button>
+)}
 </div>
-{task.notas && <p className="text-xs italic text-slate-400 break-words whitespace-normal whitespace-pre-wrap leading-relaxed border-t border-slate-100 pt-2">💡 {task.notas}</p>}
+{cleanNotas && <p className="text-xs italic text-slate-400 break-words whitespace-normal whitespace-pre-wrap leading-relaxed border-t border-slate-100 pt-2">💡 {cleanNotas}</p>}
+<div className="flex items-center justify-between pt-1 border-t border-slate-50">
+<button
+type="button"
+onClick={() => handleOpenPostponeModal(task)}
+className="text-[10px] font-bold text-slate-500 hover:text-amber-800 hover:bg-amber-50 px-2 py-1 rounded-md border border-slate-200 hover:border-amber-300 flex items-center gap-1 cursor-pointer transition-colors"
+title="Registrar que no se ejecutó hoy y trasladar a otra fecha"
+>
+<AlertTriangle className="w-3 h-3 text-amber-500" />
+<span>No ejecutada / Trasladar</span>
+</button>
 </div>
 </div>
-))
+</div>
+);
+})
 )}
 </div>
 <button
@@ -1656,7 +1971,9 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                             } ${isToday ? 'bg-amber-50/30' : ''}`}
                           >
                             <div className="space-y-1.5 min-h-[70px]">
-                              {cellTasks.map((task) => (
+                              {cellTasks.map((task) => {
+                                const { userNotas: cleanNotas, aplazamientos: taskAplazamientos } = parseTaskNotas(task.notas);
+                                return (
                                 <div
                                   key={task.id}
                                   className={`p-2 rounded-lg border text-left transition-all shadow-2xs group/card relative ${
@@ -1689,24 +2006,48 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                     {task.actividad}
                                   </p>
 
-                                  {/* Notas si existen */}
-                                  {task.notas && (
-                                    <p className="text-[10px] text-slate-500 italic mt-1 line-clamp-1" title={task.notas}>
-                                      💡 {task.notas}
+                                  {/* Badge de aplazamientos */}
+                                  {taskAplazamientos.length > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedTaskHistory({ task, aplazamientos: taskAplazamientos })}
+                                      className="mt-1 inline-flex items-center gap-1 text-[8px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 cursor-pointer"
+                                      title={`No ejecutada en ${taskAplazamientos.length} ocasión(es). Clic para ver historial.`}
+                                    >
+                                      <AlertTriangle className="w-2.5 h-2.5 text-amber-600" />
+                                      <span>No ejecutada ({taskAplazamientos.length})</span>
+                                    </button>
+                                  )}
+
+                                  {/* Notas limpias si existen */}
+                                  {cleanNotas && (
+                                    <p className="text-[10px] text-slate-500 italic mt-1 line-clamp-1" title={cleanNotas}>
+                                      💡 {cleanNotas}
                                     </p>
                                   )}
 
-                                  {/* Botón flotante para editar */}
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditingTask(task)}
-                                    title="Editar actividad"
-                                    className="absolute bottom-1 right-1 opacity-0 group-hover/card:opacity-100 p-1 text-slate-400 hover:text-amber-600 transition-opacity bg-white/90 rounded cursor-pointer"
-                                  >
-                                    <Edit className="w-3 h-3" />
-                                  </button>
+                                  {/* Botones flotantes para posponer y editar */}
+                                  <div className="absolute bottom-1 right-1 opacity-0 group-hover/card:opacity-100 flex items-center gap-1 bg-white/95 rounded shadow-xs p-0.5 transition-opacity">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenPostponeModal(task)}
+                                      title="No ejecutada / Trasladar"
+                                      className="p-1 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded cursor-pointer"
+                                    >
+                                      <AlertTriangle className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingTask({ ...task, notas: cleanNotas, _aplazamientos: taskAplazamientos })}
+                                      title="Editar actividad"
+                                      className="p-1 text-slate-400 hover:text-amber-600 hover:bg-slate-50 rounded cursor-pointer"
+                                    >
+                                      <Edit className="w-3 h-3" />
+                                    </button>
+                                  </div>
                                 </div>
-                              ))}
+                                );
+                              })}
 
                               {/* Botón añadir en celda vacía o al final */}
                               <button
@@ -1849,10 +2190,12 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                             </div>
 
                             {/* Actividades de esa obra */}
-                            {oTasks.map(task => (
+                            {oTasks.map(task => {
+                              const { userNotas: cleanNotas, aplazamientos: taskAplazamientos } = parseTaskNotas(task.notas);
+                              return (
                               <div
                                 key={task.id}
-                                className={`p-1.5 rounded-md border text-left text-xs ${
+                                className={`p-1.5 rounded-md border text-left text-xs group/card relative ${
                                   task.completada
                                     ? 'bg-slate-50 border-slate-200 text-slate-400 line-through'
                                     : 'bg-white border-slate-200 hover:border-amber-300 shadow-2xs'
@@ -1862,23 +2205,45 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                   <span className={`text-[8px] font-bold px-1 rounded uppercase ${getGremioTagClasses(task.gremio, task.completada)}`}>
                                     {task.gremio}
                                   </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleToggleComplete(task)}
-                                    className="cursor-pointer shrink-0"
-                                  >
-                                    {task.completada ? (
-                                      <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
-                                    ) : (
-                                      <Square className="w-3.5 h-3.5 text-slate-300 hover:text-amber-500" />
-                                    )}
-                                  </button>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenPostponeModal(task)}
+                                      title="No ejecutada / Trasladar"
+                                      className="cursor-pointer text-slate-400 hover:text-amber-600 transition-colors"
+                                    >
+                                      <AlertTriangle className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleComplete(task)}
+                                      className="cursor-pointer shrink-0"
+                                    >
+                                      {task.completada ? (
+                                        <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
+                                      ) : (
+                                        <Square className="w-3.5 h-3.5 text-slate-300 hover:text-amber-500" />
+                                      )}
+                                    </button>
+                                  </div>
                                 </div>
                                 <p className="font-semibold text-[11px] mt-0.5 line-clamp-2 leading-tight">
                                   {task.actividad}
                                 </p>
+                                {taskAplazamientos.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedTaskHistory({ task, aplazamientos: taskAplazamientos })}
+                                    className="mt-1 inline-flex items-center gap-0.5 text-[8px] font-bold px-1 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 cursor-pointer"
+                                    title={`No ejecutada en ${taskAplazamientos.length} ocasión(es)`}
+                                  >
+                                    <AlertTriangle className="w-2.5 h-2.5 text-amber-600" />
+                                    <span>No ejecutada ({taskAplazamientos.length})</span>
+                                  </button>
+                                )}
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         );
                       })}
@@ -2225,6 +2590,293 @@ Guardar Cambios
 </div>
 </div>
 )}
+{/* MODAL: POSTPONE TASK / REGISTRAR INCIDENCIA DE NO EJECUCIÓN */}
+{isPostponeModalOpen && postponeTask && (() => {
+  const { aplazamientos: prevAplazamientos } = parseTaskNotas(postponeTask.notas);
+  const currentExactDate = getTaskExactDate(postponeTask);
+  
+  const targetMonday = getMonday(postponeTargetWeek);
+  const dayOffset = DIAS_SEMANA_OFFSET[postponeTargetDay] ?? 0;
+  const mParts = targetMonday.split('-').map(Number);
+  const targetDateObj = new Date(mParts[0], mParts[1] - 1, mParts[2] + dayOffset, 12);
+  const targetExactDate = `${targetDateObj.getFullYear()}-${String(targetDateObj.getMonth() + 1).padStart(2, '0')}-${String(targetDateObj.getDate()).padStart(2, '0')}`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div className="bg-slate-900 text-white p-5 flex justify-between items-center">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl">
+              <AlertTriangle className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <h3 className="font-bold text-base sm:text-lg">No Ejecutada / Trasladar Actividad</h3>
+              <p className="text-xs text-slate-400">Registrar motivo de incumplimiento y reprogramar</p>
+            </div>
+          </div>
+          <button 
+            type="button" 
+            onClick={() => setIsPostponeModalOpen(false)} 
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer border-none bg-transparent"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleConfirmPostpone} className="p-5 sm:p-6 space-y-4">
+          {/* Tarjeta de la tarea en cuestión */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-1.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${getGremioTagClasses(postponeTask.gremio)}`}>
+                {postponeTask.gremio}
+              </span>
+              <span className="text-xs font-semibold text-slate-500 flex items-center gap-1">
+                <Building className="w-3.5 h-3.5 text-slate-400" />
+                {postponeTask.obra_nombre}
+              </span>
+              {prevAplazamientos.length > 0 && (
+                <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300">
+                  ⚠️ Ya aplazada {prevAplazamientos.length} {prevAplazamientos.length === 1 ? 'vez' : 'veces'}
+                </span>
+              )}
+            </div>
+            <p className="font-bold text-slate-900 text-sm">{postponeTask.actividad}</p>
+            <p className="text-xs text-slate-500">
+              Fecha prevista que no se ejecutó: <strong className="text-slate-800">{postponeTask.dia_semana} ({formatFriendlyDate(currentExactDate)})</strong>
+            </p>
+          </div>
+
+          {/* Motivo de no ejecución */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+              Motivo concreto de la no ejecución <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={postponeMotivo}
+              onChange={(e) => setPostponeMotivo(e.target.value)}
+              className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              required
+            >
+              {MOTIVOS_NO_EJECUCION.map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Detalle o causas específicas */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+              Detalle u observaciones concretas
+            </label>
+            <textarea
+              value={postponeDetalle}
+              onChange={(e) => setPostponeDetalle(e.target.value)}
+              placeholder="Explica qué ocurrió (ej: El camión de mortero no llegó a tiempo, o la lluvia inundó la zanja...)"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 h-20 resize-none"
+            />
+          </div>
+
+          {/* Reprogramación / Traslado */}
+          <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3.5 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
+                <CalendarRange className="w-4 h-4 text-amber-600" />
+                Nueva fecha de traslado
+              </label>
+              {/* Botón rápido para día siguiente */}
+              <button
+                type="button"
+                onClick={() => {
+                  const parts = (currentExactDate || '').split('-').map(Number);
+                  const baseDate = parts.length === 3 ? new Date(parts[0], parts[1] - 1, parts[2], 12) : new Date();
+                  const nextDay = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + 1, 12);
+                  if (nextDay.getDay() === 6) nextDay.setDate(nextDay.getDate() + 2);
+                  if (nextDay.getDay() === 0) nextDay.setDate(nextDay.getDate() + 1);
+                  const mon = getMonday(nextDay);
+                  const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+                  setPostponeTargetWeek(mon);
+                  setPostponeTargetDay(dayNames[nextDay.getDay()] || 'Lunes');
+                }}
+                className="text-[10px] font-bold bg-amber-200/80 hover:bg-amber-300 text-amber-950 px-2 py-0.5 rounded-md cursor-pointer transition-colors"
+              >
+                + Trasladar a mañana
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <span className="block text-[11px] font-semibold text-slate-600 mb-1">Semana de destino</span>
+                <input
+                  type="date"
+                  value={postponeTargetWeek}
+                  onChange={(e) => setPostponeTargetWeek(getMonday(e.target.value))}
+                  className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-medium text-slate-800"
+                  required
+                />
+              </div>
+              <div>
+                <span className="block text-[11px] font-semibold text-slate-600 mb-1">Día de destino</span>
+                <select
+                  value={postponeTargetDay}
+                  onChange={(e) => setPostponeTargetDay(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-medium text-slate-800"
+                >
+                  {DIAS_SEMANA.map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="text-xs text-amber-900 bg-white/80 p-2 rounded-lg border border-amber-200/60 font-medium flex items-center gap-1.5">
+              <ArrowRight className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span>Quedará reprogramada para: <strong className="text-slate-900">{postponeTargetDay}, {formatFriendlyDate(targetExactDate)}</strong></span>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setIsPostponeModalOpen(false)}
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 text-xs font-semibold rounded-xl cursor-pointer border-none"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-4 py-2 text-xs rounded-xl cursor-pointer border-none flex items-center gap-1.5 shadow-md shadow-amber-500/20"
+            >
+              <AlertTriangle className="w-4 h-4" />
+              Confirmar Traslado y Registrar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+})()}
+
+{/* MODAL: HISTORIAL DE NO EJECUCIÓN Y TRASLADOS */}
+{selectedTaskHistory && (() => {
+  const { task, aplazamientos } = selectedTaskHistory;
+  const currentExactDate = getTaskExactDate(task);
+
+  return (
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs"
+      onClick={(e) => { if (e.target === e.currentTarget) setSelectedTaskHistory(null); }}
+    >
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
+        <div className="bg-slate-900 text-white p-5 flex justify-between items-center shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl">
+              <History className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <h3 className="font-bold text-base sm:text-lg">Historial de Incidencias y Repasos</h3>
+              <p className="text-xs text-slate-400">Registro de fechas y motivos de no ejecución</p>
+            </div>
+          </div>
+          <button 
+            type="button" 
+            onClick={() => setSelectedTaskHistory(null)} 
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer border-none bg-transparent"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 sm:p-6 overflow-y-auto space-y-4 flex-1">
+          {/* Cabecera de la tarea */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${getGremioTagClasses(task.gremio)}`}>
+                {task.gremio}
+              </span>
+              <span className="text-xs font-semibold text-slate-500 flex items-center gap-1">
+                <Building className="w-3.5 h-3.5 text-slate-400" />
+                {task.obra_nombre}
+              </span>
+            </div>
+            <h4 className="font-bold text-slate-900 text-base">{task.actividad}</h4>
+            <div className="flex items-center justify-between pt-2 border-t border-slate-200/60 text-xs">
+              <span className="text-slate-500">Estado actual:</span>
+              <span className={`font-bold ${task.completada ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {task.completada ? '✓ Completada' : '⏳ Pendiente de ejecutar'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500">Programada actualmente:</span>
+              <span className="font-bold text-slate-800">
+                {task.dia_semana} · {formatFriendlyDate(currentExactDate)}
+              </span>
+            </div>
+          </div>
+
+          {/* Línea de tiempo de incidencias */}
+          <div className="space-y-3">
+            <h5 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+              Incidencias registradas ({aplazamientos.length})
+            </h5>
+
+            {aplazamientos.length === 0 ? (
+              <p className="text-xs text-slate-400 italic text-center py-4 bg-slate-50 rounded-xl">
+                No hay aplazamientos registrados para esta actividad.
+              </p>
+            ) : (
+              <div className="space-y-2.5">
+                {aplazamientos.map((apl, idx) => (
+                  <div key={apl.id || idx} className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/40 space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="bg-amber-500 text-slate-950 font-black text-[10px] px-2 py-0.5 rounded-md uppercase">
+                        Intento #{idx + 1}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        {apl.fecha_registro ? new Date(apl.fecha_registro).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+                      </span>
+                    </div>
+
+                    <div className="text-xs space-y-1">
+                      <div className="flex items-baseline gap-1 text-slate-700">
+                        <span className="font-bold text-slate-500">Fecha no ejecutada:</span>
+                        <span className="font-semibold text-rose-700">{apl.dia_anterior} {formatFriendlyDate(apl.fecha_anterior)}</span>
+                      </div>
+                      <div className="flex items-baseline gap-1 text-slate-700">
+                        <span className="font-bold text-slate-500">Motivo:</span>
+                        <span className="font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200 inline-block">{apl.motivo}</span>
+                      </div>
+                      {apl.detalle && (
+                        <div className="bg-white/80 p-2 rounded-lg border border-slate-200 text-slate-700 italic text-[11px] leading-relaxed">
+                          "{apl.detalle}"
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1.5 text-slate-700 pt-1">
+                        <ArrowRight className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span className="font-bold text-slate-500">Trasladada a:</span>
+                        <span className="font-bold text-amber-900">{apl.dia_nuevo} {formatFriendlyDate(apl.fecha_nueva)}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-end shrink-0">
+          <button
+            type="button"
+            onClick={() => setSelectedTaskHistory(null)}
+            className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2 text-xs font-bold rounded-xl cursor-pointer"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+})()}
 {/* MODAL: NEW CONSTRUCTION SITE */}
 {isNewObraModalOpen && (
 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
@@ -2830,6 +3482,458 @@ return (
 </div>
 </div>
 );
+})()}
+{/* MODAL: INFORME DE ACTIVIDADES NO EJECUTADAS Y REPASOS */}
+{isReportModalOpen && (() => {
+  const { items: incidentItems, totalTasksInPeriod, completedInPeriod, motivesCount, startDate, endDate, label: periodLabel } = reportData;
+  const totalIncidents = incidentItems.length;
+  const compliancePct = totalTasksInPeriod > 0
+    ? Math.max(0, Math.round(((totalTasksInPeriod - totalIncidents) / Math.max(totalTasksInPeriod, 1)) * 100))
+    : 100;
+
+  // Encontrar el motivo predominante
+  const topMotiveEntry = Object.entries(motivesCount).sort((a, b) => b[1] - a[1])[0];
+  const topMotive = topMotiveEntry ? `${topMotiveEntry[0]} (${topMotiveEntry[1]})` : 'Sin incidencias';
+
+  const reportObraName = reportObraId === 'all'
+    ? 'Todas las obras activas'
+    : (obras.find(o => o[0] === reportObraId)?.[1] || 'Obra Seleccionada');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-4 bg-slate-950/60 backdrop-blur-xs print:bg-white print:p-0 print:absolute print:inset-0 print:z-50 print:block">
+      <div className="bg-slate-100 rounded-none md:rounded-2xl shadow-2xl w-full max-w-6xl h-full md:h-[92vh] flex flex-col md:flex-row overflow-hidden print:bg-white print:shadow-none print:h-auto print:max-w-none print:rounded-none">
+        
+        {/* PANEL LATERAL: CONFIGURACIÓN Y FILTROS DEL INFORME (Oculto al Imprimir) */}
+        <div className="w-full md:w-80 bg-white border-b md:border-b-0 md:border-r border-slate-200 p-5 flex flex-col justify-between shrink-0 print:hidden overflow-y-auto">
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+              <FileSpreadsheet className="w-5 h-5 text-amber-500" />
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm sm:text-base">Informe de Repasos</h3>
+                <p className="text-[11px] text-slate-400">Seguimiento de tareas no ejecutadas</p>
+              </div>
+            </div>
+
+            {/* Pestañas de tipo de período */}
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5">Período del Informe</label>
+              <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setReportPeriodType('semanal')}
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                    reportPeriodType === 'semanal' ? 'bg-white text-slate-950 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Semanal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReportPeriodType('quincenal')}
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                    reportPeriodType === 'quincenal' ? 'bg-white text-slate-950 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Quincenal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReportPeriodType('mensual')}
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                    reportPeriodType === 'mensual' ? 'bg-white text-slate-950 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Mensual
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReportPeriodType('personalizado')}
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                    reportPeriodType === 'personalizado' ? 'bg-white text-slate-950 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  A Medida
+                </button>
+              </div>
+            </div>
+
+            {/* Controles específicos según período seleccionado */}
+            {reportPeriodType === 'semanal' && (
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Semana a auditar</label>
+                <input
+                  type="date"
+                  value={reportWeek || currentWeekMonday}
+                  onChange={(e) => setReportWeek(getMonday(e.target.value))}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Lunes de inicio: {formatFriendlyDate(reportWeek || currentWeekMonday)}</p>
+              </div>
+            )}
+
+            {reportPeriodType === 'quincenal' && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mes</label>
+                    <select
+                      value={reportMonth}
+                      onChange={(e) => setReportMonth(Number(e.target.value))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700"
+                    >
+                      {MESES.map((m, i) => (
+                        <option key={m} value={i}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Año</label>
+                    <input
+                      type="number"
+                      value={reportYear}
+                      onChange={(e) => setReportYear(Number(e.target.value))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quincena</label>
+                  <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl text-xs font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setReportQuincena(1)}
+                      className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                        reportQuincena === 1 ? 'bg-amber-500 text-slate-950 font-bold shadow-2xs' : 'text-slate-600'
+                      }`}
+                    >
+                      1ª (1 al 15)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReportQuincena(2)}
+                      className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                        reportQuincena === 2 ? 'bg-amber-500 text-slate-950 font-bold shadow-2xs' : 'text-slate-600'
+                      }`}
+                    >
+                      2ª (16 a fin)
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {reportPeriodType === 'mensual' && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mes</label>
+                  <select
+                    value={reportMonth}
+                    onChange={(e) => setReportMonth(Number(e.target.value))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700"
+                  >
+                    {MESES.map((m, i) => (
+                      <option key={m} value={i}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Año</label>
+                  <input
+                    type="number"
+                    value={reportYear}
+                    onChange={(e) => setReportYear(Number(e.target.value))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700"
+                  />
+                </div>
+              </div>
+            )}
+
+            {reportPeriodType === 'personalizado' && (
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Fecha Desde</label>
+                  <input
+                    type="date"
+                    value={reportCustomStart}
+                    onChange={(e) => setReportCustomStart(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Fecha Hasta</label>
+                  <input
+                    type="date"
+                    value={reportCustomEnd}
+                    onChange={(e) => setReportCustomEnd(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Filtros de Alcance */}
+            <div className="pt-2 border-t border-slate-100 space-y-3">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Filtrar por Obra</label>
+                <select
+                  value={reportObraId}
+                  onChange={(e) => setReportObraId(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700"
+                >
+                  <option value="all">📍 Todas las obras</option>
+                  {obras.map(o => (
+                    <option key={o[0]} value={o[0]}>🚧 {o[1]}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Filtrar por Gremio</label>
+                <select
+                  value={reportGremio}
+                  onChange={(e) => setReportGremio(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700"
+                >
+                  <option value="all">👥 Todos los gremios</option>
+                  {GREMIOS_PREDEFINIDOS.map(g => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Mini Resumen de Incidencias */}
+            <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-xs space-y-1">
+              <div className="flex justify-between text-amber-900 font-bold">
+                <span>Tareas no ejecutadas:</span>
+                <span className="text-amber-700 font-black">{totalIncidents}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Tareas en período:</span>
+                <span className="font-semibold text-slate-800">{totalTasksInPeriod}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Cumplimiento:</span>
+                <span className="font-semibold text-emerald-700">{compliancePct}%</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col gap-2">
+            <button
+              onClick={() => window.print()}
+              className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/10 transition-all border-none"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Imprimir / Guardar PDF</span>
+            </button>
+            <button
+              onClick={() => setIsReportModalOpen(false)}
+              className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 rounded-xl text-xs cursor-pointer transition-all border-none"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+
+        {/* PANEL DERECHO: HOJA FORMAL DIN-A4 PARA VISUALIZAR E IMPRIMIR */}
+        <div className="flex-1 bg-slate-200 p-0 md:p-6 overflow-y-auto flex justify-center print:bg-white print:p-0 print:overflow-visible">
+          <div className="bg-white w-full md:w-[210mm] min-h-none md:min-h-[297mm] shadow-lg p-6 md:p-12 flex flex-col justify-between print:shadow-none print:p-0 print:w-full print:h-auto print:min-h-0">
+            <div>
+              {/* Cabecera Corporativa de ENUE */}
+              <div className="border-b-4 border-amber-500 pb-4 mb-6 flex justify-between items-end">
+                <div>
+                  <h2 className="text-xl font-black tracking-wider text-slate-900 m-0">ENUE</h2>
+                  <p className="text-[9px] uppercase tracking-widest text-slate-500 font-bold m-0">Proyectos y Construcción S.L.</p>
+                </div>
+                <div className="text-right">
+                  <h1 className="text-sm font-black text-slate-900 uppercase tracking-tight m-0">INFORME DE NO EJECUCIÓN Y REPASOS</h1>
+                  <p className="text-[10px] text-amber-700 font-bold m-0">{periodLabel}</p>
+                </div>
+              </div>
+
+              {/* Metadatos del Informe */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3.5 mb-6 text-xs print:bg-transparent print:p-2">
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Ámbito / Obra</p>
+                  <p className="font-extrabold text-slate-900 truncate">{reportObraName}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Gremio / Subcontrata</p>
+                  <p className="font-extrabold text-slate-900">{reportGremio === 'all' ? 'Todos los Gremios' : reportGremio}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Fecha de Emisión</p>
+                  <p className="font-extrabold text-slate-900">{new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
+                </div>
+              </div>
+
+              {/* Bloque de Tarjetas KPI */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Actividades Previstas</p>
+                  <p className="text-xl font-black text-slate-900 mt-0.5">{totalTasksInPeriod}</p>
+                </div>
+                <div className="bg-rose-50/60 p-3 rounded-xl border border-rose-200">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-rose-700">No Ejecutadas / Traslados</p>
+                  <p className="text-xl font-black text-rose-800 mt-0.5">{totalIncidents}</p>
+                </div>
+                <div className="bg-emerald-50/60 p-3 rounded-xl border border-emerald-200">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Cumplimiento Programado</p>
+                  <p className="text-xl font-black text-emerald-800 mt-0.5">{compliancePct}%</p>
+                </div>
+                <div className="bg-amber-50/60 p-3 rounded-xl border border-amber-200">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-amber-800">Causa Principal</p>
+                  <p className="text-xs font-black text-amber-950 mt-1 truncate" title={topMotive}>{topMotive}</p>
+                </div>
+              </div>
+
+              {/* Desglose de Motivos de Incumplimiento */}
+              {totalIncidents > 0 && Object.keys(motivesCount).length > 0 && (
+                <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 print:bg-transparent">
+                  <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                    Distribución de Causas de No Ejecución
+                  </h4>
+                  <div className="space-y-1.5">
+                    {Object.entries(motivesCount)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([motivo, count]) => {
+                        const pct = Math.round((count / totalIncidents) * 100);
+                        return (
+                          <div key={motivo} className="space-y-0.5">
+                            <div className="flex justify-between text-xs text-slate-700 font-medium">
+                              <span className="truncate pr-2">{motivo}</span>
+                              <span className="font-bold shrink-0">{count} {count === 1 ? 'vez' : 'veces'} ({pct}%)</span>
+                            </div>
+                            <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                              <div className="bg-amber-500 h-full rounded-full" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              {/* Listado Detallado de Actividades No Ejecutadas */}
+              <div className="space-y-3">
+                <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-amber-500" />
+                    Detalle de Actividades No Ejecutadas y Traslados ({incidentItems.length})
+                  </h3>
+                </div>
+
+                {incidentItems.length === 0 ? (
+                  <div className="p-8 text-center bg-emerald-50/50 border border-emerald-200 rounded-xl">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
+                    <h5 className="font-bold text-emerald-900 text-sm">Sin incidencias en el período</h5>
+                    <p className="text-xs text-emerald-700 mt-1">
+                      Todas las actividades programadas en este período se ejecutaron en fecha o no registran retrasos.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300">
+                    <table className="w-full border-collapse text-left text-xs">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 font-bold uppercase text-[10px] tracking-wider print:bg-slate-50">
+                          <th className="p-2.5">Obra / Gremio</th>
+                          <th className="p-2.5">Actividad Programada</th>
+                          <th className="p-2.5">Fecha Prevista</th>
+                          <th className="p-2.5">Motivo Concreto & Observaciones</th>
+                          <th className="p-2.5">Trasladada a</th>
+                          <th className="p-2.5 text-center">Nº Aplazam.</th>
+                          <th className="p-2.5 text-center">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 print:divide-slate-200">
+                        {incidentItems.map((item, idx) => (
+                          <tr key={`${item.taskId}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="p-2.5 align-top">
+                              <div className="font-extrabold text-slate-900 leading-tight">{item.obra_nombre}</div>
+                              <span className={`inline-block mt-1 text-[8px] font-bold px-1.5 py-0.2 rounded uppercase ${getGremioTagClasses(item.gremio)}`}>
+                                {item.gremio}
+                              </span>
+                            </td>
+                            <td className="p-2.5 align-top font-bold text-slate-900 leading-snug">
+                              {item.actividad}
+                            </td>
+                            <td className="p-2.5 align-top text-rose-700 font-bold whitespace-nowrap">
+                              {item.dia_anterior}
+                              <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_anterior)}</div>
+                            </td>
+                            <td className="p-2.5 align-top space-y-1">
+                              <div className="font-bold text-slate-900 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px] inline-block">
+                                {item.motivo}
+                              </div>
+                              {item.detalle && (
+                                <p className="text-[11px] italic text-slate-600 leading-tight">
+                                  "{item.detalle}"
+                                </p>
+                              )}
+                            </td>
+                            <td className="p-2.5 align-top text-amber-900 font-bold whitespace-nowrap">
+                              {item.dia_nuevo}
+                              <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_nueva)}</div>
+                            </td>
+                            <td className="p-2.5 align-top text-center">
+                              <span className="font-black text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full text-[10px]">
+                                {item.numero_intento}º
+                              </span>
+                            </td>
+                            <td className="p-2.5 align-top text-center whitespace-nowrap">
+                              {item.completada ? (
+                                <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded text-[10px] border border-emerald-200">
+                                  ✓ Hecha
+                                </span>
+                              ) : (
+                                <span className="text-amber-800 font-bold bg-amber-50 px-2 py-0.5 rounded text-[10px] border border-amber-200">
+                                  ⏳ Pendiente
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Zona de Firmas y Validación Formal */}
+            <div className="mt-12 pt-6 border-t border-slate-200 grid grid-cols-2 gap-8 text-center print:mt-16 print:border-slate-300">
+              <div>
+                <div className="h-14 flex items-end justify-center mb-1">
+                  <span className="text-[10px] text-slate-300 italic">Firma del Encargado</span>
+                </div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Encargado de Obra</p>
+                <p className="text-xs font-bold text-slate-800 border-t border-solid border-slate-200 pt-1 w-48 mx-auto">Revisión de Ejecución</p>
+              </div>
+              <div>
+                <div className="h-14 flex items-end justify-center mb-1">
+                  <span className="text-[10px] text-slate-300 italic">Firma Dirección Facultativa</span>
+                </div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Jefe de Obra / Supervisión</p>
+                <p className="text-xs font-bold text-slate-800 border-t border-solid border-slate-200 pt-1 w-48 mx-auto">Dirección de Obra</p>
+              </div>
+            </div>
+
+            {/* Pie de Página del Documento */}
+            <div className="mt-8 text-center border-t border-slate-100 pt-3 flex justify-between text-[8px] text-slate-400 uppercase tracking-widest font-semibold print:mt-10 print:border-slate-200">
+              <span>ENUE PROYECTOS Y CONSTRUCCIÓN S.L.</span>
+              <span>INFORME DE NO EJECUCIÓN · {new Date().toLocaleDateString('es-ES')}</span>
+              <span>PÁGINA 1 DE 1</span>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
 })()}
 </div>
 );
