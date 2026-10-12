@@ -161,6 +161,25 @@ const getTaskExactDate = (task) => {
   return `${y}-${m}-${day}`;
 };
 
+// Obtiene la semana (Lunes) y día de la semana para una fecha ISO YYYY-MM-DD
+const getDateDetails = (dateStr) => {
+  if (!dateStr) return { targetMonday: '', targetDay: 'Lunes' };
+  const parts = dateStr.split('-').map(Number);
+  const d = new Date(parts[0], parts[1] - 1, parts[2], 12);
+  const dayOfWeek = d.getDay(); // 0 Dom, 1 Lun, 2 Mar, 3 Mie, 4 Jue, 5 Vie, 6 Sab
+  const monday = getMonday(d);
+  const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  let targetDay = dayNames[dayOfWeek];
+  let targetMonday = monday;
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    targetDay = 'Lunes';
+    const nextMonDate = new Date(d);
+    nextMonDate.setDate(d.getDate() + (dayOfWeek === 6 ? 2 : 1));
+    targetMonday = getMonday(nextMonDate);
+  }
+  return { targetMonday, targetDay, d };
+};
+
 const MOTIVOS_NO_EJECUCION = [
   'Falta de material / Suministros',
   'Subcontrata / Gremio no comparece',
@@ -258,6 +277,8 @@ const [copyTargetWeek, setCopyTargetWeek] = useState(currentWeekMonday);
 const [targetCopyDay, setTargetCopyDay] = useState('Lunes');
 const [draggedTask, setDraggedTask] = useState(null);
 const [dragOverDay, setDragOverDay] = useState(null);
+const [dragOverCell, setDragOverCell] = useState(null);
+const [dragOverCalendarDate, setDragOverCalendarDate] = useState(null);
 const [openTaskMenuId, setOpenTaskMenuId] = useState(null);
 // State for Postponing / Incident Registration (No ejecutada)
 const [isPostponeModalOpen, setIsPostponeModalOpen] = useState(false);
@@ -266,6 +287,7 @@ const [postponeMotivo, setPostponeMotivo] = useState(MOTIVOS_NO_EJECUCION[0]);
 const [postponeDetalle, setPostponeDetalle] = useState('');
 const [postponeTargetWeek, setPostponeTargetWeek] = useState(currentWeekMonday);
 const [postponeTargetDay, setPostponeTargetDay] = useState('Lunes');
+const [postponeTargetObraId, setPostponeTargetObraId] = useState(null);
 // State for viewing detailed postponement history of a task
 const [selectedTaskHistory, setSelectedTaskHistory] = useState(null);
 // State for Incident / Postponement Report Modal
@@ -837,16 +859,23 @@ setError('Error al copiar actividad: ' + err.message);
 };
 
 // Open Postpone / Non-execution Modal for a task
-const handleOpenPostponeModal = (task) => {
+const handleOpenPostponeModal = (task, targetWeek = null, targetDay = null, targetObraId = null) => {
   setPostponeTask(task);
   setPostponeMotivo(MOTIVOS_NO_EJECUCION[0]);
   setPostponeDetalle('');
-  const taskWeek = task.fecha_semana || currentWeekMonday;
-  const parts = taskWeek.split('-').map(Number);
-  const nextWeekDate = new Date(parts[0], parts[1] - 1, parts[2] + 7, 12);
-  const nextMonday = getMonday(nextWeekDate);
-  setPostponeTargetWeek(nextMonday);
-  setPostponeTargetDay(task.dia_semana || 'Lunes');
+  if (targetWeek && targetDay) {
+    setPostponeTargetWeek(targetWeek);
+    setPostponeTargetDay(targetDay);
+  } else {
+    const taskWeek = task.fecha_semana || currentWeekMonday;
+    const parts = (taskWeek || '').split('-').map(Number);
+    const baseDate = parts.length === 3 ? new Date(parts[0], parts[1] - 1, parts[2], 12) : new Date();
+    const nextWeekDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + 7, 12);
+    const nextMonday = getMonday(nextWeekDate);
+    setPostponeTargetWeek(nextMonday);
+    setPostponeTargetDay(task.dia_semana || 'Lunes');
+  }
+  setPostponeTargetObraId(targetObraId || task.obra_id);
   setIsPostponeModalOpen(true);
 };
 
@@ -882,14 +911,27 @@ const handleConfirmPostpone = async (e) => {
   const updatedAplazamientos = [...aplazamientos, newIncident];
   const newRawNotas = serializeTaskNotas(userNotas, updatedAplazamientos);
 
+  const finalObraId = postponeTargetObraId || postponeTask.obra_id;
+  const matchedObra = obras.find(o => o[0] === finalObraId);
+  const finalObraNombre = matchedObra ? matchedObra[1] : (postponeTask.obra_nombre || 'Obra');
+
   try {
-    await db.exec(
-      'UPDATE tareas SET fecha_semana = ?, dia_semana = ?, notas = ? WHERE id = ?',
-      [targetMonday, postponeTargetDay, newRawNotas, postponeTask.id]
-    );
+    if (finalObraId !== postponeTask.obra_id) {
+      await db.exec(
+        'UPDATE tareas SET obra_id = ?, fecha_semana = ?, dia_semana = ?, notas = ? WHERE id = ?',
+        [finalObraId, targetMonday, postponeTargetDay, newRawNotas, postponeTask.id]
+      );
+    } else {
+      await db.exec(
+        'UPDATE tareas SET fecha_semana = ?, dia_semana = ?, notas = ? WHERE id = ?',
+        [targetMonday, postponeTargetDay, newRawNotas, postponeTask.id]
+      );
+    }
 
     const updatedTask = {
       ...postponeTask,
+      obra_id: finalObraId,
+      obra_nombre: finalObraNombre,
       fecha_semana: targetMonday,
       dia_semana: postponeTargetDay,
       notas: newRawNotas
@@ -904,10 +946,11 @@ const handleConfirmPostpone = async (e) => {
 
     setIsPostponeModalOpen(false);
     setPostponeTask(null);
+    setPostponeTargetObraId(null);
     setPostponeMotivo(MOTIVOS_NO_EJECUCION[0]);
     setPostponeDetalle('');
     setError(null);
-    setSuccessMessage(`Incidencia registrada: Actividad no ejecutada y trasladada al ${postponeTargetDay} ${formatFriendlyDate(targetExactDate)}.`);
+    setSuccessMessage(`Incidencia registrada: Actividad trasladada al ${postponeTargetDay} ${formatFriendlyDate(targetExactDate)}.`);
   } catch (err) {
     setError('Error al registrar el aplazamiento: ' + err.message);
   }
@@ -1056,11 +1099,11 @@ if (!e.currentTarget.contains(e.relatedTarget)) {
 setDragOverDay(null);
 }
 };
-const handleDropOnDay = async (e, targetDay) => {
+const handleDropOnDay = (e, targetDay) => {
 e.preventDefault();
 e.stopPropagation();
 const draggedTaskId = draggedTask?.id || e.dataTransfer.getData('text/plain');
-const sourceTask = draggedTask || tareas.find(task => String(task.id) === String(draggedTaskId));
+const sourceTask = draggedTask || todasLasTareas.find(task => String(task.id) === String(draggedTaskId));
 setDragOverDay(null);
 if (!sourceTask) {
 setDraggedTask(null);
@@ -1070,19 +1113,77 @@ if (sourceTask.dia_semana === targetDay && sourceTask.fecha_semana === currentWe
 setDraggedTask(null);
 return;
 }
-try {
-await db.exec('UPDATE tareas SET fecha_semana = ?, dia_semana = ? WHERE id = ?', [currentWeekMonday, targetDay, sourceTask.id]);
-const updatedTask = { ...sourceTask, fecha_semana: currentWeekMonday, dia_semana: targetDay };
-setTareas(prev => prev.map(task => task.id === sourceTask.id ? updatedTask : task));
-setTodasLasTareas(prev => prev.map(task => task.id === sourceTask.id ? updatedTask : task));
 setDraggedTask(null);
-setError(null);
-setSuccessMessage('Actividad movida correctamente.');
-} catch (err) {
-setDraggedTask(null);
-setError('Error al mover actividad: ' + err.message);
-loadData();
-}
+// Al mover de día, se pregunta el motivo para registrar la no ejecución / reprogramación
+handleOpenPostponeModal(sourceTask, currentWeekMonday, targetDay, sourceTask.obra_id);
+};
+
+// Drag & drop para Cuadrante Mensual: Matriz por Obras
+const handleDragOverMonthlyCell = (e, cellKey) => {
+  e.preventDefault();
+  try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
+  setDragOverCell(cellKey);
+};
+
+const handleDragLeaveMonthlyCell = (e) => {
+  if (!e.currentTarget.contains(e.relatedTarget)) {
+    setDragOverCell(null);
+  }
+};
+
+const handleDropOnMonthlyMatrixCell = (e, targetObraId, targetDateStr) => {
+  e.preventDefault();
+  e.stopPropagation();
+  setDragOverCell(null);
+  const draggedTaskId = draggedTask?.id || e.dataTransfer.getData('text/plain');
+  const sourceTask = draggedTask || todasLasTareas.find(task => String(task.id) === String(draggedTaskId));
+  if (!sourceTask) {
+    setDraggedTask(null);
+    return;
+  }
+  const sourceExactDate = getTaskExactDate(sourceTask);
+  if (sourceExactDate === targetDateStr && sourceTask.obra_id === targetObraId) {
+    setDraggedTask(null);
+    return;
+  }
+  setDraggedTask(null);
+  const { targetMonday, targetDay } = getDateDetails(targetDateStr);
+  // Preguntar motivo y abrir modal preconfigurado
+  handleOpenPostponeModal(sourceTask, targetMonday, targetDay, targetObraId);
+};
+
+// Drag & drop para Cuadrícula Calendario Mensual
+const handleDragOverCalendarDate = (e, dateStr) => {
+  e.preventDefault();
+  try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
+  setDragOverCalendarDate(dateStr);
+};
+
+const handleDragLeaveCalendarDate = (e) => {
+  if (!e.currentTarget.contains(e.relatedTarget)) {
+    setDragOverCalendarDate(null);
+  }
+};
+
+const handleDropOnCalendarDate = (e, targetDateStr) => {
+  e.preventDefault();
+  e.stopPropagation();
+  setDragOverCalendarDate(null);
+  const draggedTaskId = draggedTask?.id || e.dataTransfer.getData('text/plain');
+  const sourceTask = draggedTask || todasLasTareas.find(task => String(task.id) === String(draggedTaskId));
+  if (!sourceTask) {
+    setDraggedTask(null);
+    return;
+  }
+  const sourceExactDate = getTaskExactDate(sourceTask);
+  if (sourceExactDate === targetDateStr) {
+    setDraggedTask(null);
+    return;
+  }
+  setDraggedTask(null);
+  const { targetMonday, targetDay } = getDateDetails(targetDateStr);
+  // Preguntar motivo y abrir modal preconfigurado
+  handleOpenPostponeModal(sourceTask, targetMonday, targetDay, sourceTask.obra_id);
 };
 // Toggle task completion
 const handleToggleComplete = async (task) => {
@@ -1962,13 +2063,22 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                       {daysOfMonthList.map((day) => {
                         const cellTasks = tasksByObraAndDate[obraId]?.[day.dateStr] || [];
                         const isToday = day.dateStr === todayExactDate;
+                        const cellKey = `${obraId}-${day.dateStr}`;
+                        const isDraggedOver = dragOverCell === cellKey;
 
                         return (
                           <td
                             key={day.dateStr}
-                            className={`p-2 border-r border-slate-200 align-top min-w-[130px] max-w-[170px] transition-colors relative group/cell ${
-                              day.isWeekend ? 'bg-slate-50/60' : 'bg-white'
-                            } ${isToday ? 'bg-amber-50/30' : ''}`}
+                            onDragOver={(e) => handleDragOverMonthlyCell(e, cellKey)}
+                            onDragLeave={handleDragLeaveMonthlyCell}
+                            onDrop={(e) => handleDropOnMonthlyMatrixCell(e, obraId, day.dateStr)}
+                            className={`p-2 border-r border-slate-200 align-top min-w-[130px] max-w-[170px] transition-all relative group/cell ${
+                              isDraggedOver
+                                ? 'bg-amber-100/90 ring-2 ring-amber-500 ring-inset shadow-inner'
+                                : day.isWeekend
+                                ? 'bg-slate-50/60'
+                                : 'bg-white'
+                            } ${isToday && !isDraggedOver ? 'bg-amber-50/30' : ''}`}
                           >
                             <div className="space-y-1.5 min-h-[70px]">
                               {cellTasks.map((task) => {
@@ -1976,19 +2086,26 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                 return (
                                 <div
                                   key={task.id}
-                                  className={`p-2 rounded-lg border text-left transition-all shadow-2xs group/card relative ${
+                                  draggable={true}
+                                  onDragStart={(e) => handleDragStart(e, task)}
+                                  onDragEnd={() => { setDraggedTask(null); setDragOverCell(null); }}
+                                  className={`p-2 rounded-lg border text-left transition-all shadow-2xs group/card relative cursor-grab active:cursor-grabbing ${
                                     task.completada
                                       ? 'bg-slate-50 border-slate-200 text-slate-400'
                                       : 'bg-white border-slate-200 hover:border-amber-400 hover:shadow-xs'
                                   }`}
                                 >
-                                  {/* Cabecera de la mini tarjeta: Gremio y Checkbox */}
+                                  {/* Cabecera de la mini tarjeta: Gremio, Grip y Checkbox */}
                                   <div className="flex items-center justify-between gap-1 mb-1">
-                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${getGremioTagClasses(task.gremio, task.completada)}`}>
-                                      {task.gremio}
-                                    </span>
+                                    <div className="flex items-center gap-1 min-w-0">
+                                      <GripVertical className="w-3 h-3 text-slate-300 group-hover/card:text-amber-500 shrink-0" />
+                                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider truncate ${getGremioTagClasses(task.gremio, task.completada)}`}>
+                                        {task.gremio}
+                                      </span>
+                                    </div>
                                     <button
                                       type="button"
+                                      onPointerDown={(e) => e.stopPropagation()}
                                       onClick={() => handleToggleComplete(task)}
                                       title={task.completada ? 'Marcar pendiente' : 'Marcar completada'}
                                       className="cursor-pointer shrink-0"
@@ -2010,6 +2127,7 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                   {taskAplazamientos.length > 0 && (
                                     <button
                                       type="button"
+                                      onPointerDown={(e) => e.stopPropagation()}
                                       onClick={() => setSelectedTaskHistory({ task, aplazamientos: taskAplazamientos })}
                                       className="mt-1 inline-flex items-center gap-1 text-[8px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 cursor-pointer"
                                       title={`No ejecutada en ${taskAplazamientos.length} ocasión(es). Clic para ver historial.`}
@@ -2027,7 +2145,10 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                   )}
 
                                   {/* Botones flotantes para posponer y editar */}
-                                  <div className="absolute bottom-1 right-1 opacity-0 group-hover/card:opacity-100 flex items-center gap-1 bg-white/95 rounded shadow-xs p-0.5 transition-opacity">
+                                  <div 
+                                    className="absolute bottom-1 right-1 opacity-0 group-hover/card:opacity-100 flex items-center gap-1 bg-white/95 rounded shadow-xs p-0.5 transition-opacity"
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                  >
                                     <button
                                       type="button"
                                       onClick={() => handleOpenPostponeModal(task)}
@@ -2143,11 +2264,18 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                 tasksByObraInCell[t.obra_id].push(t);
               });
 
+              const isDraggedOver = dragOverCalendarDate === cell.dateStr;
+
               return (
                 <div
                   key={cell.dateStr}
+                  onDragOver={(e) => handleDragOverCalendarDate(e, cell.dateStr)}
+                  onDragLeave={handleDragLeaveCalendarDate}
+                  onDrop={(e) => handleDropOnCalendarDate(e, cell.dateStr)}
                   className={`min-h-[140px] rounded-xl border p-2 flex flex-col justify-between transition-all ${
-                    !cell.isCurrentMonth
+                    isDraggedOver
+                      ? 'bg-amber-100/90 ring-2 ring-amber-500 ring-inset shadow-inner'
+                      : !cell.isCurrentMonth
                       ? 'bg-slate-50/40 border-slate-100 text-slate-300'
                       : isToday
                       ? 'bg-amber-50/40 border-amber-300 ring-2 ring-amber-400'
@@ -2195,17 +2323,23 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                               return (
                               <div
                                 key={task.id}
-                                className={`p-1.5 rounded-md border text-left text-xs group/card relative ${
+                                draggable={true}
+                                onDragStart={(e) => handleDragStart(e, task)}
+                                onDragEnd={() => { setDraggedTask(null); setDragOverCalendarDate(null); }}
+                                className={`p-1.5 rounded-md border text-left text-xs group/card relative cursor-grab active:cursor-grabbing ${
                                   task.completada
                                     ? 'bg-slate-50 border-slate-200 text-slate-400 line-through'
                                     : 'bg-white border-slate-200 hover:border-amber-300 shadow-2xs'
                                 }`}
                               >
                                 <div className="flex items-center justify-between gap-1">
-                                  <span className={`text-[8px] font-bold px-1 rounded uppercase ${getGremioTagClasses(task.gremio, task.completada)}`}>
-                                    {task.gremio}
-                                  </span>
-                                  <div className="flex items-center gap-1">
+                                  <div className="flex items-center gap-1 min-w-0">
+                                    <GripVertical className="w-2.5 h-2.5 text-slate-300 group-hover/card:text-amber-500 shrink-0" />
+                                    <span className={`text-[8px] font-bold px-1 rounded uppercase truncate ${getGremioTagClasses(task.gremio, task.completada)}`}>
+                                      {task.gremio}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
                                     <button
                                       type="button"
                                       onClick={() => handleOpenPostponeModal(task)}
@@ -2233,6 +2367,7 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                 {taskAplazamientos.length > 0 && (
                                   <button
                                     type="button"
+                                    onPointerDown={(e) => e.stopPropagation()}
                                     onClick={() => setSelectedTaskHistory({ task, aplazamientos: taskAplazamientos })}
                                     className="mt-1 inline-flex items-center gap-0.5 text-[8px] font-bold px-1 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 cursor-pointer"
                                     title={`No ejecutada en ${taskAplazamientos.length} ocasión(es)`}

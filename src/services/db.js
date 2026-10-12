@@ -269,6 +269,22 @@ export const db = {
         return { changes: 1 };
       }
 
+      // UPDATE tareas SET obra_id = ?, fecha_semana = ?, dia_semana = ?, notas = ? WHERE id = ?
+      if (lower.startsWith('update tareas set obra_id = ?, fecha_semana = ?, dia_semana = ?, notas = ? where id = ?')) {
+        const [obra_id, fecha_semana, dia_semana, notas, id] = params;
+        const updateData = {
+          obra_id: String(obra_id),
+          fecha_semana: String(fecha_semana),
+          dia_semana: String(dia_semana),
+          notas: String(notas || '')
+        };
+        await updateDoc(doc(firestore, 'tareas', String(id)), updateData);
+        if (tareasMap.has(String(id))) {
+          Object.assign(tareasMap.get(String(id)), updateData);
+        }
+        return { changes: 1 };
+      }
+
       // UPDATE tareas SET fecha_semana = ?, dia_semana = ?, notas = ? WHERE id = ?
       if (lower.startsWith('update tareas set fecha_semana = ?, dia_semana = ?, notas = ? where id = ?')) {
         const [fecha_semana, dia_semana, notas, id] = params;
