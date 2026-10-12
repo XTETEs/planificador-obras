@@ -166,35 +166,6 @@ export function setUserContext(user) {
 
     async function checkReady() {
       if (obrasReady && tareasReady && !isInitialized) {
-        if (obrasMap.size === 0) {
-          let alreadyInitialized = false;
-          try {
-            if (localStorage.getItem('enue_user_init_' + currentUserId)) {
-              alreadyInitialized = true;
-            } else {
-              const uSnap = await getDoc(doc(firestore, 'users', currentUserId));
-              if (uSnap.exists() && uSnap.data()?.initialized) {
-                alreadyInitialized = true;
-                localStorage.setItem('enue_user_init_' + currentUserId, '1');
-              }
-            }
-          } catch (e) {
-            console.warn('Error comprobando inicialización:', e);
-          }
-
-          if (!alreadyInitialized) {
-            await seedUserInitialData(currentUserId);
-            try {
-              localStorage.setItem('enue_user_init_' + currentUserId, '1');
-              await setDoc(doc(firestore, 'users', currentUserId), { initialized: true }, { merge: true });
-            } catch (e) {}
-          }
-        } else {
-          try {
-            localStorage.setItem('enue_user_init_' + currentUserId, '1');
-            await setDoc(doc(firestore, 'users', currentUserId), { initialized: true }, { merge: true });
-          } catch (e) {}
-        }
         isInitialized = true;
         resolve();
         notify(false);

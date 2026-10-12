@@ -431,20 +431,14 @@ loadData(); // Reload safely when synched
 return () => unsubscribe();
 }, [db, currentUser, loadData]);
 
+// Limpieza de base de datos SQLite local en IndexedDB para evitar que reaparezcan obras de prueba
 useEffect(() => {
-  if (!currentUser) return;
-  const userMigrateKey = `local_db_migrated_${currentUser.uid}`;
-  const alreadyMigrated = localStorage.getItem(userMigrateKey);
-  if (!alreadyMigrated) {
-    migrateLocalDataToFirestore().then((res) => {
-      if (res.success && (res.countObras > 0 || res.countTareas > 0)) {
-        localStorage.setItem(userMigrateKey, 'true');
-        setSuccessMessage(`Sincronización automática: se han volcado ${res.countObras} obras y ${res.countTareas} tareas locales a tu sesión.`);
-        loadData();
-      }
-    }).catch(console.error);
+  if (typeof window !== 'undefined' && window.indexedDB) {
+    try {
+      window.indexedDB.deleteDatabase('planificador-obras');
+    } catch (e) {}
   }
-}, [currentUser, loadData]);
+}, []);
 
 const handleLogout = async () => {
   if (!confirm(`¿Deseas cerrar tu sesión corporativa (${currentUser?.email})?`)) return;
