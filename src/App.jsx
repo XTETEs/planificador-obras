@@ -1579,7 +1579,7 @@ return (
 </div>
 <div>
 <h1 className="text-2xl font-bold text-slate-950 flex items-center gap-2">
-Planificador Semanal
+Planificador Semanal Actividades / Repasos
 {syncing && (
 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 animate-pulse">
 <RefreshCw className="w-3 h-3 mr-1 animate-spin" /> Guardando...
