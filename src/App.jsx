@@ -302,6 +302,7 @@ const [postponeTargetDay, setPostponeTargetDay] = useState('Lunes');
 const [postponeTargetObraId, setPostponeTargetObraId] = useState(null);
 // State for viewing detailed postponement history of a task
 const [selectedTaskHistory, setSelectedTaskHistory] = useState(null);
+const [incidentToDelete, setIncidentToDelete] = useState(null);
 // State for Incident / Postponement Report Modal
 const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 const [reportPeriodType, setReportPeriodType] = useState('mensual'); // 'semanal', 'quincenal', 'mensual', 'personalizado'
@@ -1025,6 +1026,77 @@ const handleConfirmPostpone = async (e) => {
     setSuccessMessage(`Incidencia registrada: Actividad trasladada al ${postponeTargetDay} ${formatFriendlyDate(targetExactDate)}.`);
   } catch (err) {
     setError('Error al registrar el aplazamiento: ' + err.message);
+  }
+};
+
+// Eliminar un registro de incidencia del historial (con opción de revertir la fecha si fue un error)
+const handleConfirmDeleteIncident = async (revertDate = false) => {
+  if (!incidentToDelete) return;
+  const { task, incident, index } = incidentToDelete;
+  const { userNotas, aplazamientos } = parseTaskNotas(task.notas);
+
+  // Filtrar la incidencia eliminada
+  const updatedAplazamientos = aplazamientos.filter((a, idx) => {
+    if (incident.id && a.id) return a.id !== incident.id;
+    return idx !== index;
+  });
+
+  const newRawNotas = serializeTaskNotas(userNotas, updatedAplazamientos);
+
+  try {
+    if (revertDate && incident.fecha_anterior && incident.dia_anterior) {
+      const prevMonday = getMonday(incident.fecha_anterior);
+      const prevDay = incident.dia_anterior;
+
+      await db.exec(
+        'UPDATE tareas SET fecha_semana = ?, dia_semana = ?, notas = ? WHERE id = ?',
+        [prevMonday, prevDay, newRawNotas, task.id]
+      );
+
+      const updatedTask = {
+        ...task,
+        fecha_semana: prevMonday,
+        dia_semana: prevDay,
+        notas: newRawNotas
+      };
+
+      if (prevMonday === currentWeekMonday) {
+        setTareas(prev => prev.map(t => t.id === task.id ? updatedTask : t));
+      } else {
+        setTareas(prev => prev.filter(t => t.id !== task.id));
+      }
+      setTodasLasTareas(prev => prev.map(t => t.id === task.id ? updatedTask : t));
+
+      if (selectedTaskHistory && selectedTaskHistory.task.id === task.id) {
+        setSelectedTaskHistory(updatedAplazamientos.length > 0 ? { task: updatedTask, aplazamientos: updatedAplazamientos } : null);
+      }
+
+      setSuccessMessage(`Incidencia eliminada y actividad restaurada a su fecha original: ${prevDay} (${formatFriendlyDate(incident.fecha_anterior)}).`);
+    } else {
+      await db.exec(
+        'UPDATE tareas SET notas = ? WHERE id = ?',
+        [newRawNotas, task.id]
+      );
+
+      const updatedTask = {
+        ...task,
+        notas: newRawNotas
+      };
+
+      setTareas(prev => prev.map(t => t.id === task.id ? updatedTask : t));
+      setTodasLasTareas(prev => prev.map(t => t.id === task.id ? updatedTask : t));
+
+      if (selectedTaskHistory && selectedTaskHistory.task.id === task.id) {
+        setSelectedTaskHistory(updatedAplazamientos.length > 0 ? { task: updatedTask, aplazamientos: updatedAplazamientos } : null);
+      }
+
+      setSuccessMessage('Incidencia eliminada del historial correctamente.');
+    }
+
+    setIncidentToDelete(null);
+    setError(null);
+  } catch (err) {
+    setError('Error al eliminar la incidencia: ' + err.message);
   }
 };
 
@@ -3197,9 +3269,20 @@ Guardar Cambios
                       <span className="bg-amber-500 text-slate-950 font-black text-[10px] px-2 py-0.5 rounded-md uppercase">
                         Intento #{idx + 1}
                       </span>
-                      <span className="text-[10px] text-slate-400">
-                        {apl.fecha_registro ? new Date(apl.fecha_registro).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-400">
+                          {apl.fecha_registro ? new Date(apl.fecha_registro).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIncidentToDelete({ task, incident: apl, index: idx })}
+                          className="text-rose-600 hover:text-rose-800 hover:bg-rose-100/80 px-2 py-0.5 rounded-md border border-rose-200 transition-colors cursor-pointer flex items-center gap-1 text-[10px] font-bold"
+                          title="Eliminar o revertir esta incidencia"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Eliminar</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div className="text-xs space-y-1">
@@ -3245,6 +3328,115 @@ Guardar Cambios
             className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2 text-xs font-bold rounded-xl cursor-pointer"
           >
             Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+})()}
+
+{/* MODAL DE CONFIRMACIÓN: ELIMINAR O REVERTIR INCIDENCIA */}
+{incidentToDelete && (() => {
+  const { task, incident, index } = incidentToDelete;
+  const canRevert = Boolean(incident.fecha_anterior && incident.dia_anterior);
+
+  return (
+    <div 
+      className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs"
+      onClick={(e) => { if (e.target === e.currentTarget) setIncidentToDelete(null); }}
+    >
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div className="bg-slate-900 text-white p-4 flex justify-between items-center">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-rose-500/20 text-rose-400 rounded-lg">
+              <Trash2 className="w-4 h-4 text-rose-400" />
+            </div>
+            <div>
+              <h4 className="font-bold text-sm sm:text-base leading-tight">Eliminar Incidencia</h4>
+              <p className="text-[10px] text-slate-400">Deshacer o corregir movimiento de actividad</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIncidentToDelete(null)}
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer border-none bg-transparent"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4 text-xs text-slate-700">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className={`text-[8px] font-bold px-1.5 py-0.2 rounded uppercase ${getGremioTagClasses(task.gremio)}`}>
+                {task.gremio}
+              </span>
+              <span className="text-[10px] font-bold text-slate-500">{task.obra_nombre}</span>
+            </div>
+            <p className="font-extrabold text-slate-900 text-sm">{task.actividad}</p>
+            <div className="pt-2 border-t border-slate-200 text-[11px] space-y-1">
+              <div>
+                <span className="font-bold text-slate-500">Fecha no ejecutada: </span>
+                <span className="text-rose-700 font-bold">{incident.dia_anterior} {formatFriendlyDate(incident.fecha_anterior)}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <ArrowRight className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span className="font-bold text-slate-500">Trasladada a: </span>
+                <span className="text-amber-900 font-bold">{incident.dia_nuevo} {formatFriendlyDate(incident.fecha_nueva)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 leading-relaxed font-medium">
+            💡 ¿Te has equivocado al moverla de día? Puedes <strong>devolver la actividad a su fecha original</strong> o solo quitar este registro del historial.
+          </div>
+
+          <div className="space-y-2 pt-1">
+            {canRevert && (
+              <button
+                type="button"
+                onClick={() => handleConfirmDeleteIncident(true)}
+                className="w-full p-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-left transition-all cursor-pointer shadow-xs flex items-center justify-between group border-none"
+              >
+                <div>
+                  <div className="flex items-center gap-1.5 text-xs font-black">
+                    <ArrowRightLeft className="w-4 h-4 text-slate-950" />
+                    Revertir fecha y borrar incidencia (Recomendado)
+                  </div>
+                  <p className="text-[10px] text-slate-800 font-medium mt-0.5">
+                    Devuelve la actividad a: <strong>{incident.dia_anterior} ({formatFriendlyDate(incident.fecha_anterior)})</strong> y elimina este registro de no ejecución.
+                  </p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-slate-950 shrink-0 group-hover:translate-x-0.5 transition-transform" />
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => handleConfirmDeleteIncident(false)}
+              className="w-full p-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-left transition-all cursor-pointer flex items-center justify-between group border-none"
+            >
+              <div>
+                <div className="flex items-center gap-1.5 text-xs font-black text-rose-700">
+                  <Trash2 className="w-4 h-4 text-rose-600" />
+                  Solo borrar registro del historial
+                </div>
+                <p className="text-[10px] text-slate-500 font-normal mt-0.5">
+                  Mantiene la actividad en su fecha actual ({incident.dia_nuevo}) y solo quita este registro de los informes.
+                </p>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-400 shrink-0 group-hover:translate-x-0.5 transition-transform" />
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-slate-50 p-3.5 border-t border-slate-200 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setIncidentToDelete(null)}
+            className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200 transition-colors cursor-pointer border-none bg-transparent"
+          >
+            Cancelar
           </button>
         </div>
       </div>
