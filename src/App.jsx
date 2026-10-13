@@ -324,7 +324,8 @@ const [selectedTaskHistory, setSelectedTaskHistory] = useState(null);
 const [incidentToDelete, setIncidentToDelete] = useState(null);
 // State for Incident / Postponement Report Modal
 const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-const [reportPeriodType, setReportPeriodType] = useState('mensual'); // 'semanal', 'quincenal', 'mensual', 'personalizado'
+const [reportPeriodType, setReportPeriodType] = useState('mensual'); // 'semanal', 'quincenal', 'mensual', 'personalizado', 'total'
+const [reportViewFilter, setReportViewFilter] = useState('all'); // 'all', 'ejecutadas', 'no_ejecutadas'
 const [reportWeek, setReportWeek] = useState(() => currentWeekMonday);
 const [reportMonth, setReportMonth] = useState(() => new Date().getMonth());
 const [reportYear, setReportYear] = useState(() => new Date().getFullYear());
@@ -1198,6 +1199,16 @@ const handleConfirmDeleteIncident = async (revertDate = false) => {
 
 // Calculate Start Date and End Date for the Report
 const getReportDateRange = useCallback(() => {
+  if (reportPeriodType === 'total') {
+    const obraObj = obras.find(o => o[0] === reportObraId);
+    const obraLabel = obraObj ? obraObj[1] : (reportObraId === 'all' ? 'Todas las obras activas' : 'Obra');
+    return {
+      label: `Histórico acumulado hasta fin de obra (${obraLabel})`,
+      startDate: '1970-01-01',
+      endDate: '2099-12-31'
+    };
+  }
+
   if (reportPeriodType === 'semanal') {
     const monday = reportWeek || currentWeekMonday;
     const parts = monday.split('-').map(Number);
@@ -1254,12 +1265,21 @@ const getReportDateRange = useCallback(() => {
     startDate: reportCustomStart,
     endDate: reportCustomEnd
   };
-}, [reportPeriodType, reportWeek, currentWeekMonday, reportYear, reportMonth, reportQuincena, reportCustomStart, reportCustomEnd]);
+}, [reportPeriodType, reportWeek, currentWeekMonday, reportYear, reportMonth, reportQuincena, reportCustomStart, reportCustomEnd, reportObraId, obras]);
 
-// Compute report metrics and list of unexecuted / postponed tasks
+// Compute report metrics, list of unexecuted / postponed tasks, and successfully executed tasks / repasos
 const reportData = useMemo(() => {
   const { startDate, endDate } = getReportDateRange();
-  if (!startDate || !endDate) return { items: [], totalTasksInPeriod: 0, completedInPeriod: 0, motivesCount: {} };
+  if (!startDate || !endDate) {
+    return {
+      items: [],
+      completedItems: [],
+      totalTasksInPeriod: 0,
+      completedInPeriod: 0,
+      pendingInPeriod: 0,
+      motivesCount: {}
+    };
+  }
 
   const scopedTasks = todasLasTareas.filter(t => {
     if (reportObraId !== 'all' && t.obra_id !== reportObraId) return false;
@@ -1274,7 +1294,8 @@ const reportData = useMemo(() => {
     const { aplazamientos } = parseTaskNotas(task.notas);
 
     aplazamientos.forEach((apl, idx) => {
-      const inPeriod = (apl.fecha_anterior >= startDate && apl.fecha_anterior <= endDate)
+      const inPeriod = (reportPeriodType === 'total')
+        || (apl.fecha_anterior >= startDate && apl.fecha_anterior <= endDate)
         || (apl.fecha_nueva >= startDate && apl.fecha_nueva <= endDate);
 
       if (inPeriod) {
@@ -1309,22 +1330,55 @@ const reportData = useMemo(() => {
     });
   });
 
-  // Baseline tasks planned for this period
+  // Tareas planificadas para este período (o todas si es hasta fin de obra)
   const tasksInPeriod = scopedTasks.filter(t => {
+    if (reportPeriodType === 'total') return true;
     const d = getTaskExactDate(t);
     return d && d >= startDate && d <= endDate;
   });
 
-    return {
-      items: incidentItems,
-      totalTasksInPeriod: tasksInPeriod.length,
-      completedInPeriod: tasksInPeriod.filter(t => t.completada).length,
-      motivesCount,
-      startDate,
-      endDate,
-      label: getReportDateRange().label
-    };
-}, [getReportDateRange, todasLasTareas, reportObraId, reportGremio]);
+  // Actividades y repasos ejecutados satisfactoriamente
+  const completedItems = [];
+  tasksInPeriod.forEach(task => {
+    if (task.completada) {
+      const { userNotas, aplazamientos } = parseTaskNotas(task.notas);
+      const exactDate = getTaskExactDate(task);
+      completedItems.push({
+        taskId: task.id,
+        task,
+        obra_id: task.obra_id,
+        obra_nombre: task.obra_nombre,
+        actividad: task.actividad,
+        gremio: task.gremio,
+        fecha_ejecucion: exactDate,
+        dia_semana: task.dia_semana,
+        notas: userNotas,
+        total_aplazamientos: aplazamientos.length,
+        es_repaso_subsanado: aplazamientos.length > 0,
+        aplazamientos
+      });
+    }
+  });
+
+  // Ordenar por fecha de ejecución (o fecha_semana) ascendente
+  completedItems.sort((a, b) => {
+    const dComp = (a.fecha_ejecucion || '').localeCompare(b.fecha_ejecucion || '');
+    if (dComp !== 0) return dComp;
+    return a.actividad.localeCompare(b.actividad, 'es');
+  });
+
+  return {
+    items: incidentItems,
+    completedItems,
+    totalTasksInPeriod: tasksInPeriod.length,
+    completedInPeriod: completedItems.length,
+    pendingInPeriod: tasksInPeriod.filter(t => !t.completada).length,
+    motivesCount,
+    startDate,
+    endDate,
+    label: getReportDateRange().label
+  };
+}, [getReportDateRange, todasLasTareas, reportObraId, reportGremio, reportPeriodType]);
 
 // HTML5 drag-and-drop entre días
 const handleDragStart = (e, task) => {
@@ -4486,7 +4540,7 @@ return (
 })()}
 {/* MODAL: INFORME DE ACTIVIDADES NO EJECUTADAS Y REPASOS */}
 {isReportModalOpen && (() => {
-  const { items: incidentItems, totalTasksInPeriod, completedInPeriod, motivesCount, startDate, endDate, label: periodLabel } = reportData;
+  const { items: incidentItems, completedItems = [], totalTasksInPeriod, completedInPeriod, motivesCount, startDate, endDate, label: periodLabel } = reportData;
   const totalIncidents = incidentItems.length;
   const compliancePct = totalTasksInPeriod > 0
     ? Math.max(0, Math.round(((totalTasksInPeriod - totalIncidents) / Math.max(totalTasksInPeriod, 1)) * 100))
@@ -4511,14 +4565,14 @@ return (
               <FileSpreadsheet className="w-5 h-5 text-amber-500" />
               <div>
                 <h3 className="font-bold text-slate-900 text-sm sm:text-base">Informe de Repasos</h3>
-                <p className="text-[11px] text-slate-400">Seguimiento de tareas no ejecutadas</p>
+                <p className="text-[11px] text-slate-400">Seguimiento de ejecución e incidencias</p>
               </div>
             </div>
 
             {/* Pestañas de tipo de período */}
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5">Período del Informe</label>
-              <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
+              <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold mb-1">
                 <button
                   type="button"
                   onClick={() => setReportPeriodType('semanal')}
@@ -4546,6 +4600,8 @@ return (
                 >
                   Mensual
                 </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
                 <button
                   type="button"
                   onClick={() => setReportPeriodType('personalizado')}
@@ -4555,7 +4611,79 @@ return (
                 >
                   A Medida
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setReportPeriodType('total')}
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                    reportPeriodType === 'total' ? 'bg-amber-500 text-slate-950 shadow-2xs font-black' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Histórico acumulado de todos los repasos hasta el final de la obra"
+                >
+                  Fin de Obra
+                </button>
               </div>
+            </div>
+
+            {/* Selector de Contenido a Listar / Imprimir */}
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5">Contenido a Listar / Imprimir</label>
+              <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold text-center">
+                <button
+                  type="button"
+                  onClick={() => setReportViewFilter('all')}
+                  className={`py-1.5 px-1 rounded-lg transition-all cursor-pointer text-[11px] ${
+                    reportViewFilter === 'all' ? 'bg-white text-slate-950 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Todos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReportViewFilter('ejecutadas')}
+                  className={`py-1.5 px-1 rounded-lg transition-all cursor-pointer text-[11px] ${
+                    reportViewFilter === 'ejecutadas' ? 'bg-emerald-600 text-white shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Listar exclusivamente repasos y actividades ejecutadas satisfactoriamente"
+                >
+                  ✓ Ejecutados
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReportViewFilter('no_ejecutadas')}
+                  className={`py-1.5 px-1 rounded-lg transition-all cursor-pointer text-[11px] ${
+                    reportViewFilter === 'no_ejecutadas' ? 'bg-rose-600 text-white shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Listar exclusivamente actividades no ejecutadas e incidencias"
+                >
+                  ⏳ Incidencias
+                </button>
+              </div>
+            </div>
+
+            {/* Opción Rápida: Listar e imprimir repasos hasta fin de obra */}
+            <div className="p-3 bg-emerald-50/90 border border-emerald-300 rounded-xl space-y-2">
+              <div className="flex items-center gap-1.5 text-emerald-900 font-extrabold text-xs">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Repasos hasta Fin de Obra</span>
+              </div>
+              <p className="text-[11px] text-emerald-800 leading-tight">
+                Lista e imprime todas las actividades y repasos ejecutados satisfactoriamente hasta el final de la obra.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setReportPeriodType('total');
+                  setReportViewFilter('ejecutadas');
+                }}
+                className={`w-full py-2 px-3 rounded-lg text-xs font-black cursor-pointer transition-all flex items-center justify-center gap-1.5 border shadow-2xs ${
+                  reportPeriodType === 'total' && reportViewFilter === 'ejecutadas'
+                    ? 'bg-emerald-600 text-white border-emerald-700'
+                    : 'bg-white hover:bg-emerald-100 text-emerald-900 border-emerald-300'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>{reportPeriodType === 'total' && reportViewFilter === 'ejecutadas' ? '✓ Modo Fin de Obra Activo' : 'Listar Ejecutados Fin de Obra'}</span>
+              </button>
             </div>
 
             {/* Controles específicos según período seleccionado */}
@@ -4673,6 +4801,12 @@ return (
               </div>
             )}
 
+            {reportPeriodType === 'total' && (
+              <div className="p-2.5 bg-amber-50/70 border border-amber-200 rounded-lg text-xs text-amber-900">
+                <span className="font-bold">Modo Fin de Obra:</span> Incluye todas las actividades y repasos planificados o ejecutados en la obra sin límite de fecha.
+              </div>
+            )}
+
             {/* Filtros de Alcance */}
             <div className="pt-2 border-t border-slate-100 space-y-3">
               <div>
@@ -4704,19 +4838,29 @@ return (
               </div>
             </div>
 
-            {/* Mini Resumen de Incidencias */}
-            <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-xs space-y-1">
-              <div className="flex justify-between text-amber-900 font-bold">
-                <span>Tareas no ejecutadas:</span>
-                <span className="text-amber-700 font-black">{totalIncidents}</span>
+            {/* Mini Resumen de Conteo */}
+            <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-xs space-y-1.5">
+              <div className="flex justify-between text-emerald-900 font-bold">
+                <span className="flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  Ejecutados con éxito:
+                </span>
+                <span className="text-emerald-700 font-black text-sm">{completedInPeriod}</span>
               </div>
-              <div className="flex justify-between text-slate-600">
-                <span>Tareas en período:</span>
+              <div className="flex justify-between text-rose-900 font-bold">
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 text-rose-600" />
+                  No ejecutadas / traslados:
+                </span>
+                <span className="text-rose-700 font-black text-sm">{totalIncidents}</span>
+              </div>
+              <div className="flex justify-between text-slate-600 pt-1 border-t border-amber-200/60">
+                <span>Actividades programadas:</span>
                 <span className="font-semibold text-slate-800">{totalTasksInPeriod}</span>
               </div>
               <div className="flex justify-between text-slate-600">
-                <span>Cumplimiento:</span>
-                <span className="font-semibold text-emerald-700">{compliancePct}%</span>
+                <span>Efectividad / Cumplimiento:</span>
+                <span className="font-black text-emerald-700">{compliancePct}%</span>
               </div>
             </div>
           </div>
@@ -4749,8 +4893,16 @@ return (
                   <p className="text-[9px] uppercase tracking-widest text-slate-500 font-bold m-0">Proyectos y Construcción S.L.</p>
                 </div>
                 <div className="text-right">
-                  <h1 className="text-sm font-black text-slate-900 uppercase tracking-tight m-0">INFORME DE NO EJECUCIÓN Y REPASOS</h1>
-                  <p className="text-[10px] text-amber-700 font-bold m-0">{periodLabel}</p>
+                  <h1 className="text-sm font-black text-slate-900 uppercase tracking-tight m-0">
+                    {reportViewFilter === 'ejecutadas'
+                      ? (reportPeriodType === 'total' ? 'INFORME DE REPASOS EJECUTADOS - HASTA FIN DE OBRA' : 'INFORME DE ACTIVIDADES Y REPASOS EJECUTADOS')
+                      : reportViewFilter === 'no_ejecutadas'
+                      ? 'INFORME DE NO EJECUCIÓN Y TRASLADOS'
+                      : (reportPeriodType === 'total' ? 'INFORME DE REPASOS Y CONTROL - HASTA FIN DE OBRA' : 'INFORME DE REPASOS Y CONTROL DE EJECUCIÓN')}
+                  </h1>
+                  <p className="text-[10px] text-amber-700 font-bold m-0">
+                    {reportPeriodType === 'total' ? 'HASTA FIN DE OBRA' : periodLabel}
+                  </p>
                 </div>
               </div>
 
@@ -4775,137 +4927,245 @@ return (
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Actividades Previstas</p>
                   <p className="text-xl font-black text-slate-900 mt-0.5">{totalTasksInPeriod}</p>
+                  <p className="text-[10px] font-medium text-slate-500 mt-0.5">Programadas</p>
+                </div>
+                <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-300">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 flex items-center justify-between">
+                    <span>Ejecutadas con Éxito</span>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  </p>
+                  <p className="text-xl font-black text-emerald-900 mt-0.5">{completedInPeriod}</p>
+                  <p className="text-[10px] font-semibold text-emerald-700 mt-0.5">{compliancePct}% efectividad</p>
                 </div>
                 <div className="bg-rose-50/60 p-3 rounded-xl border border-rose-200">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-rose-700">No Ejecutadas / Traslados</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-rose-700 flex items-center justify-between">
+                    <span>No Ejecutadas / Traslados</span>
+                    <Clock className="w-3.5 h-3.5 text-rose-600" />
+                  </p>
                   <p className="text-xl font-black text-rose-800 mt-0.5">{totalIncidents}</p>
-                </div>
-                <div className="bg-emerald-50/60 p-3 rounded-xl border border-emerald-200">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Cumplimiento Programado</p>
-                  <p className="text-xl font-black text-emerald-800 mt-0.5">{compliancePct}%</p>
+                  <p className="text-[10px] font-semibold text-rose-600 mt-0.5">{totalTasksInPeriod > 0 ? Math.round((totalIncidents / totalTasksInPeriod) * 100) : 0}% incidencias</p>
                 </div>
                 <div className="bg-amber-50/60 p-3 rounded-xl border border-amber-200">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-amber-800">Causa Principal</p>
                   <p className="text-xs font-black text-amber-950 mt-1 truncate" title={topMotive}>{topMotive}</p>
+                  <p className="text-[10px] font-semibold text-amber-700 mt-0.5">Motivo frecuente</p>
                 </div>
               </div>
 
-              {/* Desglose de Motivos de Incumplimiento */}
-              {totalIncidents > 0 && Object.keys(motivesCount).length > 0 && (
-                <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 print:bg-transparent">
-                  <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                    Distribución de Causas y Etiquetas de No Ejecución
-                  </h4>
-                  <div className="space-y-1.5">
-                    {Object.entries(motivesCount)
-                      .sort((a, b) => b[1] - a[1])
-                      .map(([motivo, count]) => {
-                        const pct = Math.round((count / totalIncidents) * 100);
-                        return (
-                          <div key={motivo} className="space-y-0.5">
-                            <div className="flex justify-between text-xs text-slate-700 font-medium">
-                              <span className="truncate pr-2">{motivo}</span>
-                              <span className="font-bold shrink-0">{count} {count === 1 ? 'vez' : 'veces'} ({pct}%)</span>
-                            </div>
-                            <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-                              <div className="bg-amber-500 h-full rounded-full" style={{ width: `${pct}%` }} />
-                            </div>
-                          </div>
-                        );
-                      })}
+              {/* SECCIÓN: LISTADO DETALLADO DE ACTIVIDADES Y REPASOS EJECUTADOS */}
+              {(reportViewFilter === 'all' || reportViewFilter === 'ejecutadas') && (
+                <div className="space-y-3 mb-8">
+                  <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      Listado de Actividades y Repasos Ejecutados Satisfactoriamente ({completedItems.length})
+                    </h3>
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      {completedItems.length} {completedItems.length === 1 ? 'ejecución registrada' : 'ejecuciones registradas'}
+                    </span>
                   </div>
+
+                  {completedItems.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-xl">
+                      <Clock className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                      <h5 className="font-bold text-slate-700 text-sm">Sin actividades ejecutadas en el período</h5>
+                      <p className="text-xs text-slate-500 mt-1">
+                        No constan tareas marcadas como completadas para los filtros y fechas seleccionadas.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300">
+                      <table className="w-full border-collapse text-left text-xs">
+                        <thead>
+                          <tr className="bg-emerald-50/70 text-slate-700 border-b border-slate-200 font-bold uppercase text-[10px] tracking-wider print:bg-slate-50">
+                            <th className="p-2.5">Obra / Gremio</th>
+                            <th className="p-2.5">Actividad / Repaso</th>
+                            <th className="p-2.5">Fecha Ejecución</th>
+                            <th className="p-2.5">Historial / Tipo</th>
+                            <th className="p-2.5">Observaciones</th>
+                            <th className="p-2.5 text-center">Resultado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 print:divide-slate-200">
+                          {completedItems.map((item, idx) => (
+                            <tr key={`${item.taskId}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="p-2.5 align-top">
+                                <div className="font-extrabold text-slate-900 leading-tight">{item.obra_nombre}</div>
+                                <span className={`inline-block mt-1 text-[8px] font-bold px-1.5 py-0.2 rounded uppercase ${getGremioTagClasses(item.gremio)}`}>
+                                  {item.gremio}
+                                </span>
+                              </td>
+                              <td className="p-2.5 align-top font-bold text-slate-900 leading-snug">
+                                {item.actividad}
+                              </td>
+                              <td className="p-2.5 align-top text-slate-700 font-bold whitespace-nowrap">
+                                <div>{item.dia_semana || '—'}</div>
+                                <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_ejecucion)}</div>
+                              </td>
+                              <td className="p-2.5 align-top">
+                                {item.es_repaso_subsanado ? (
+                                  <div className="space-y-0.5">
+                                    <span className="inline-block font-extrabold text-amber-900 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded text-[9px]">
+                                      Subsanado tras {item.total_aplazamientos} {item.total_aplazamientos === 1 ? 'repaso' : 'repasos'}
+                                    </span>
+                                    {item.aplazamientos && item.aplazamientos.length > 0 && item.aplazamientos[item.aplazamientos.length - 1].motivo && (
+                                      <p className="text-[10px] text-slate-500 italic mt-0.5">
+                                        Previo: {item.aplazamientos[item.aplazamientos.length - 1].motivo}
+                                      </p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="inline-block font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[9px]">
+                                    A término (Sin repaso previo)
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-2.5 align-top text-slate-600 text-[11px] leading-tight">
+                                {item.notas ? (
+                                  <span className="italic">"{item.notas}"</span>
+                                ) : (
+                                  <span className="text-slate-400 font-normal">—</span>
+                                )}
+                              </td>
+                              <td className="p-2.5 align-top text-center whitespace-nowrap">
+                                <span className="inline-flex items-center gap-1 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded text-[10px] border border-emerald-200">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                  ✓ Ejecutado
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Listado Detallado de Actividades No Ejecutadas */}
-              <div className="space-y-3">
-                <div className="flex justify-between items-center border-b border-slate-200 pb-2">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                    <FileText className="w-4 h-4 text-amber-500" />
-                    Detalle de Actividades No Ejecutadas y Traslados ({incidentItems.length})
-                  </h3>
-                </div>
-
-                {incidentItems.length === 0 ? (
-                  <div className="p-8 text-center bg-emerald-50/50 border border-emerald-200 rounded-xl">
-                    <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
-                    <h5 className="font-bold text-emerald-900 text-sm">Sin incidencias en el período</h5>
-                    <p className="text-xs text-emerald-700 mt-1">
-                      Todas las actividades programadas en este período se ejecutaron en fecha o no registran retrasos.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300">
-                    <table className="w-full border-collapse text-left text-xs">
-                      <thead>
-                        <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 font-bold uppercase text-[10px] tracking-wider print:bg-slate-50">
-                          <th className="p-2.5">Obra / Gremio</th>
-                          <th className="p-2.5">Actividad Programada</th>
-                          <th className="p-2.5">Fecha Prevista</th>
-                          <th className="p-2.5">Etiquetas (Tags) & Observaciones</th>
-                          <th className="p-2.5">Trasladada a</th>
-                          <th className="p-2.5 text-center">Nº Aplazam.</th>
-                          <th className="p-2.5 text-center">Estado</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 print:divide-slate-200">
-                        {incidentItems.map((item, idx) => (
-                          <tr key={`${item.taskId}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="p-2.5 align-top">
-                              <div className="font-extrabold text-slate-900 leading-tight">{item.obra_nombre}</div>
-                              <span className={`inline-block mt-1 text-[8px] font-bold px-1.5 py-0.2 rounded uppercase ${getGremioTagClasses(item.gremio)}`}>
-                                {item.gremio}
-                              </span>
-                            </td>
-                            <td className="p-2.5 align-top font-bold text-slate-900 leading-snug">
-                              {item.actividad}
-                            </td>
-                            <td className="p-2.5 align-top text-rose-700 font-bold whitespace-nowrap">
-                              {item.dia_anterior}
-                              <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_anterior)}</div>
-                            </td>
-                            <td className="p-2.5 align-top space-y-1">
-                              <div className="flex flex-wrap gap-1">
-                                {(item.tags || (item.motivo ? item.motivo.split(',').map(s => s.trim()) : ['General'])).map(t => (
-                                  <span key={t} className="font-bold text-amber-950 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded text-[10px]">
-                                    #{t}
-                                  </span>
-                                ))}
+              {/* SECCIÓN: DESGLOSE Y LISTADO DE ACTIVIDADES NO EJECUTADAS / TRASLADOS */}
+              {(reportViewFilter === 'all' || reportViewFilter === 'no_ejecutadas') && (
+                <div className="space-y-6">
+                  {/* Desglose de Motivos de Incumplimiento */}
+                  {totalIncidents > 0 && Object.keys(motivesCount).length > 0 && (
+                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 print:bg-transparent">
+                      <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                        Distribución de Causas y Etiquetas de No Ejecución
+                      </h4>
+                      <div className="space-y-1.5">
+                        {Object.entries(motivesCount)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([motivo, count]) => {
+                            const pct = Math.round((count / totalIncidents) * 100);
+                            return (
+                              <div key={motivo} className="space-y-0.5">
+                                <div className="flex justify-between text-xs text-slate-700 font-medium">
+                                  <span className="truncate pr-2">{motivo}</span>
+                                  <span className="font-bold shrink-0">{count} {count === 1 ? 'vez' : 'veces'} ({pct}%)</span>
+                                </div>
+                                <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                                  <div className="bg-amber-500 h-full rounded-full" style={{ width: `${pct}%` }} />
+                                </div>
                               </div>
-                              {item.detalle && (
-                                <p className="text-[11px] italic text-slate-600 leading-tight">
-                                  "{item.detalle}"
-                                </p>
-                              )}
-                            </td>
-                            <td className="p-2.5 align-top text-amber-900 font-bold whitespace-nowrap">
-                              {item.dia_nuevo}
-                              <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_nueva)}</div>
-                            </td>
-                            <td className="p-2.5 align-top text-center">
-                              <span className="font-black text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full text-[10px]">
-                                {item.numero_intento}º
-                              </span>
-                            </td>
-                            <td className="p-2.5 align-top text-center whitespace-nowrap">
-                              {item.completada ? (
-                                <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded text-[10px] border border-emerald-200">
-                                  ✓ Hecha
-                                </span>
-                              ) : (
-                                <span className="text-amber-800 font-bold bg-amber-50 px-2 py-0.5 rounded text-[10px] border border-amber-200">
-                                  ⏳ Pendiente
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Listado Detallado de Actividades No Ejecutadas */}
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                      <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                        <FileText className="w-4 h-4 text-amber-500" />
+                        Detalle de Actividades No Ejecutadas y Traslados ({incidentItems.length})
+                      </h3>
+                      <span className="text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                        {incidentItems.length} {incidentItems.length === 1 ? 'incidencia registrada' : 'incidencias registradas'}
+                      </span>
+                    </div>
+
+                    {incidentItems.length === 0 ? (
+                      <div className="p-8 text-center bg-emerald-50/50 border border-emerald-200 rounded-xl">
+                        <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
+                        <h5 className="font-bold text-emerald-900 text-sm">Sin incidencias en el período</h5>
+                        <p className="text-xs text-emerald-700 mt-1">
+                          Todas las actividades programadas en este período se ejecutaron en fecha o no registran retrasos.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300">
+                        <table className="w-full border-collapse text-left text-xs">
+                          <thead>
+                            <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 font-bold uppercase text-[10px] tracking-wider print:bg-slate-50">
+                              <th className="p-2.5">Obra / Gremio</th>
+                              <th className="p-2.5">Actividad Programada</th>
+                              <th className="p-2.5">Fecha Prevista</th>
+                              <th className="p-2.5">Etiquetas (Tags) & Observaciones</th>
+                              <th className="p-2.5">Trasladada a</th>
+                              <th className="p-2.5 text-center">Nº Aplazam.</th>
+                              <th className="p-2.5 text-center">Estado</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 print:divide-slate-200">
+                            {incidentItems.map((item, idx) => (
+                              <tr key={`${item.taskId}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="p-2.5 align-top">
+                                  <div className="font-extrabold text-slate-900 leading-tight">{item.obra_nombre}</div>
+                                  <span className={`inline-block mt-1 text-[8px] font-bold px-1.5 py-0.2 rounded uppercase ${getGremioTagClasses(item.gremio)}`}>
+                                    {item.gremio}
+                                  </span>
+                                </td>
+                                <td className="p-2.5 align-top font-bold text-slate-900 leading-snug">
+                                  {item.actividad}
+                                </td>
+                                <td className="p-2.5 align-top text-rose-700 font-bold whitespace-nowrap">
+                                  {item.dia_anterior}
+                                  <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_anterior)}</div>
+                                </td>
+                                <td className="p-2.5 align-top space-y-1">
+                                  <div className="flex flex-wrap gap-1">
+                                    {(item.tags || (item.motivo ? item.motivo.split(',').map(s => s.trim()) : ['General'])).map(t => (
+                                      <span key={t} className="font-bold text-amber-950 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded text-[10px]">
+                                        #{t}
+                                      </span>
+                                    ))}
+                                  </div>
+                                  {item.detalle && (
+                                    <p className="text-[11px] italic text-slate-600 leading-tight">
+                                      "{item.detalle}"
+                                    </p>
+                                  )}
+                                </td>
+                                <td className="p-2.5 align-top text-amber-900 font-bold whitespace-nowrap">
+                                  {item.dia_nuevo}
+                                  <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_nueva)}</div>
+                                </td>
+                                <td className="p-2.5 align-top text-center">
+                                  <span className="font-black text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full text-[10px]">
+                                    {item.numero_intento}º
+                                  </span>
+                                </td>
+                                <td className="p-2.5 align-top text-center whitespace-nowrap">
+                                  {item.completada ? (
+                                    <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded text-[10px] border border-emerald-200">
+                                      ✓ Hecha
+                                    </span>
+                                  ) : (
+                                    <span className="text-amber-800 font-bold bg-amber-50 px-2 py-0.5 rounded text-[10px] border border-amber-200">
+                                      ⏳ Pendiente
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
             {/* Zona de Firmas y Validación Formal */}
@@ -4929,7 +5189,7 @@ return (
             {/* Pie de Página del Documento */}
             <div className="mt-8 text-center border-t border-slate-100 pt-3 flex justify-between text-[8px] text-slate-400 uppercase tracking-widest font-semibold print:mt-10 print:border-slate-200">
               <span>ENUE PROYECTOS Y CONSTRUCCIÓN S.L.</span>
-              <span>INFORME DE NO EJECUCIÓN · {new Date().toLocaleDateString('es-ES')}</span>
+              <span>INFORME DE REPASOS Y CONTROL · {new Date().toLocaleDateString('es-ES')}</span>
               <span>PÁGINA 1 DE 1</span>
             </div>
 
