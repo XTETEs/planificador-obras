@@ -5305,34 +5305,6 @@ return (
                 </div>
               </div>
 
-              {/* Desglose global de causas de no ejecución (si aplica) */}
-              {(reportViewFilter === 'all' || reportViewFilter === 'no_ejecutadas') && totalIncidents > 0 && Object.keys(motivesCount).length > 0 && (
-                <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 print:bg-transparent">
-                  <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                    Distribución de Causas y Etiquetas de No Ejecución
-                  </h4>
-                  <div className="space-y-1.5">
-                    {Object.entries(motivesCount)
-                      .sort((a, b) => b[1] - a[1])
-                      .map(([motivo, count]) => {
-                        const pct = Math.round((count / totalIncidents) * 100);
-                        return (
-                          <div key={motivo} className="space-y-0.5">
-                            <div className="flex justify-between text-xs text-slate-700 font-medium">
-                              <span className="truncate pr-2">{motivo}</span>
-                              <span className="font-bold shrink-0">{count} {count === 1 ? 'vez' : 'veces'} ({pct}%)</span>
-                            </div>
-                            <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-                              <div className="bg-amber-500 h-full rounded-full" style={{ width: `${pct}%` }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </div>
-              )}
-
               {/* LISTADO DE ACTIVIDADES Y REPASOS AGRUPADOS POR CADA OBRA */}
               <div className="space-y-8">
                 {obrasGrouped.length === 0 ? (
@@ -5640,6 +5612,43 @@ return (
                   })
                 )}
               </div>
+
+              {/* Desglose global de causas de no ejecución (Gráfica al final del informe) */}
+              {(reportViewFilter === 'all' || reportViewFilter === 'no_ejecutadas') && totalIncidents > 0 && Object.keys(motivesCount).length > 0 && (
+                <div className="mt-10 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3.5 print:bg-slate-50/50 print:border-slate-300 print:mt-8 print-avoid-break">
+                  <div className="flex items-center justify-between border-b border-slate-200/80 pb-2.5">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                      <span>Distribución de Causas y Etiquetas de No Ejecución</span>
+                    </h4>
+                    <span className="text-[10px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded-full border border-slate-200 shadow-2xs">
+                      {totalIncidents} {totalIncidents === 1 ? 'incidencia registrada' : 'incidencias registradas'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 pt-1">
+                    {Object.entries(motivesCount)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([motivo, count]) => {
+                        const pct = Math.round((count / totalIncidents) * 100);
+                        return (
+                          <div key={motivo} className="space-y-1">
+                            <div className="flex justify-between text-xs text-slate-800 font-semibold">
+                              <span className="truncate pr-2">{motivo}</span>
+                              <span className="font-black shrink-0 text-slate-900">{count} {count === 1 ? 'vez' : 'veces'} ({pct}%)</span>
+                            </div>
+                            <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                              <div
+                                className="bg-amber-500 h-full rounded-full transition-all duration-500"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Zona de Firmas y Validación Formal (Global para impresión consolidada o pantalla) */}
