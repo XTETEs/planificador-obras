@@ -46,7 +46,8 @@ Share2,
 ExternalLink,
 CheckCheck
 } from 'lucide-react';
-import { migrateLocalDataToFirestore, setUserContext, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio } from './services/db.js';
+import { doc, setDoc } from 'firebase/firestore';
+import { migrateLocalDataToFirestore, setUserContext, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio, firestore } from './services/db.js';
 import { onAuthUserChange, logout, CORPORATE_DOMAIN } from './services/auth.js';
 import { AuthView } from './components/AuthView.jsx';
 // EMBEDDED DATABASES ID
@@ -4574,58 +4575,62 @@ return (
 
     const targetObras = reportObraId === 'all'
       ? obras
-      : obras.filter(o => o[0] === reportObraId);
+      : obras.filter(o => o && o[0] === reportObraId);
 
     targetObras.forEach(o => {
-      obraMap.set(String(o[0]), {
-        obra_id: String(o[0]),
-        obra_nombre: o[1],
-        completedItems: [],
-        incidentItems: []
-      });
+      if (o && o[0]) {
+        obraMap.set(String(o[0]), {
+          obra_id: String(o[0]),
+          obra_nombre: o[1] || 'Obra',
+          completedItems: [],
+          incidentItems: []
+        });
+      }
     });
 
     completedItems.forEach(item => {
-      let g = obraMap.get(String(item.obra_id));
+      const oId = String(item.obra_id || 'unknown');
+      let g = obraMap.get(oId);
       if (!g) {
         g = {
-          obra_id: String(item.obra_id),
+          obra_id: oId,
           obra_nombre: item.obra_nombre || 'Obra',
           completedItems: [],
           incidentItems: []
         };
-        obraMap.set(String(item.obra_id), g);
+        obraMap.set(oId, g);
       }
       g.completedItems.push(item);
     });
 
     incidentItems.forEach(item => {
-      let g = obraMap.get(String(item.obra_id));
+      const oId = String(item.obra_id || 'unknown');
+      let g = obraMap.get(oId);
       if (!g) {
         g = {
-          obra_id: String(item.obra_id),
+          obra_id: oId,
           obra_nombre: item.obra_nombre || 'Obra',
           completedItems: [],
           incidentItems: []
         };
-        obraMap.set(String(item.obra_id), g);
+        obraMap.set(oId, g);
       }
       g.incidentItems.push(item);
     });
 
     // Ordenar actividades de cada obra por fecha ascendente
     obraMap.forEach(g => {
-      g.completedItems.sort((a, b) => (a.fecha_ejecucion || '').localeCompare(b.fecha_ejecucion || ''));
-      g.incidentItems.sort((a, b) => (a.fecha_nueva || a.fecha_anterior || '').localeCompare(b.fecha_nueva || b.fecha_anterior || ''));
+      g.completedItems.sort((a, b) => String(a.fecha_ejecucion || '').localeCompare(String(b.fecha_ejecucion || '')));
+      g.incidentItems.sort((a, b) => String(a.fecha_nueva || a.fecha_anterior || '').localeCompare(String(b.fecha_nueva || b.fecha_anterior || '')));
     });
 
     return Array.from(obraMap.values())
       .filter(g => {
         if (reportViewFilter === 'ejecutadas') return g.completedItems.length > 0;
         if (reportViewFilter === 'no_ejecutadas') return g.incidentItems.length > 0;
-        return g.completedItems.length > 0 || g.incidentItems.length > 0 || reportObraId === g.obra_id;
+        return g.completedItems.length > 0 || g.incidentItems.length > 0 || (reportObraId !== 'all' && reportObraId === g.obra_id);
       })
-      .sort((a, b) => a.obra_nombre.localeCompare(b.obra_nombre, 'es'));
+      .sort((a, b) => String(a.obra_nombre || '').localeCompare(String(b.obra_nombre || ''), 'es'));
   })();
 
   // Generador de texto para el correo
@@ -5235,7 +5240,7 @@ return (
                   </div>
                 ) : (
                   obrasGrouped.map((group, groupIdx) => {
-                    const obraColor = getPrintObraColor(group.obra_id);
+                    const obraColor = getObraColor(group.obra_id, obras);
 
                     return (
                       <div
