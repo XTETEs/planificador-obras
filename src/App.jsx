@@ -1381,12 +1381,21 @@ const reportData = useMemo(() => {
     return a.actividad.localeCompare(b.actividad, 'es');
   });
 
+  const pendingItems = tasksInPeriod.filter(t => !t.completada);
+
+  // El total de actividades programadas / hitos en el período comprende:
+  // 1) Las actividades ejecutadas satisfactoriamente (completedItems)
+  // 2) Las actividades no ejecutadas / traslados e incidencias producidos en el período (incidentItems)
+  // 3) Las actividades actualmente planificadas en el período que siguen pendientes de ejecución (pendingItems)
+  const totalTasksInPeriod = completedItems.length + incidentItems.length + pendingItems.length;
+
   return {
     items: incidentItems,
     completedItems,
-    totalTasksInPeriod: tasksInPeriod.length,
+    pendingItems,
+    totalTasksInPeriod,
     completedInPeriod: completedItems.length,
-    pendingInPeriod: tasksInPeriod.filter(t => !t.completada).length,
+    pendingInPeriod: pendingItems.length,
     motivesCount,
     startDate,
     endDate,
@@ -4554,7 +4563,7 @@ return (
 })()}
 {/* MODAL: INFORME DE ACTIVIDADES NO EJECUTADAS Y REPASOS */}
 {isReportModalOpen && (() => {
-  const { items: incidentItems, completedItems = [], totalTasksInPeriod, completedInPeriod, motivesCount, startDate, endDate, label: periodLabel } = reportData;
+  const { items: incidentItems, completedItems = [], pendingItems = [], totalTasksInPeriod, completedInPeriod, pendingInPeriod = 0, motivesCount, startDate, endDate, label: periodLabel } = reportData;
   const totalIncidents = incidentItems.length;
   // Efectividad de ejecución: tareas completadas respecto al total programado en el período
   const compliancePct = totalTasksInPeriod > 0
@@ -4583,7 +4592,8 @@ return (
           obra_id: String(o[0]),
           obra_nombre: o[1] || 'Obra',
           completedItems: [],
-          incidentItems: []
+          incidentItems: [],
+          pendingItems: []
         });
       }
     });
@@ -4596,7 +4606,8 @@ return (
           obra_id: oId,
           obra_nombre: item.obra_nombre || 'Obra',
           completedItems: [],
-          incidentItems: []
+          incidentItems: [],
+          pendingItems: []
         };
         obraMap.set(oId, g);
       }
@@ -4611,11 +4622,29 @@ return (
           obra_id: oId,
           obra_nombre: item.obra_nombre || 'Obra',
           completedItems: [],
-          incidentItems: []
+          incidentItems: [],
+          pendingItems: []
         };
         obraMap.set(oId, g);
       }
       g.incidentItems.push(item);
+    });
+
+    pendingItems.forEach(item => {
+      const oId = String(item.obra_id || 'unknown');
+      let g = obraMap.get(oId);
+      if (!g) {
+        g = {
+          obra_id: oId,
+          obra_nombre: item.obra_nombre || 'Obra',
+          completedItems: [],
+          incidentItems: [],
+          pendingItems: []
+        };
+        obraMap.set(oId, g);
+      }
+      if (!g.pendingItems) g.pendingItems = [];
+      g.pendingItems.push(item);
     });
 
     // Ordenar actividades de cada obra por fecha ascendente
@@ -5123,13 +5152,24 @@ return (
                 </span>
                 <span className="text-rose-700 font-black text-sm">{totalIncidents}</span>
               </div>
+              {pendingInPeriod > 0 && (
+                <div className="flex justify-between text-amber-900 font-bold">
+                  <span className="flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    Pendientes en el período:
+                  </span>
+                  <span className="text-amber-800 font-black text-sm">{pendingInPeriod}</span>
+                </div>
+              )}
               <div className="flex justify-between text-slate-600 pt-1 border-t border-amber-200/60">
                 <span>Actividades programadas:</span>
                 <span className="font-semibold text-slate-800">{totalTasksInPeriod}</span>
               </div>
               <div className="flex justify-between text-slate-600">
                 <span>Efectividad / Cumplimiento:</span>
-                <span className="font-black text-emerald-700">{compliancePct}%</span>
+                <span className={`font-black ${compliancePct >= 80 ? 'text-emerald-700' : compliancePct >= 50 ? 'text-amber-700' : 'text-rose-700'}`}>
+                  {compliancePct}%
+                </span>
               </div>
             </div>
           </div>
@@ -5304,6 +5344,8 @@ return (
                 ) : (
                   obrasGrouped.map((group, groupIdx) => {
                     const obraColor = getObraColor(group.obra_id, obras);
+                    const groupProgramadas = group.completedItems.length + group.incidentItems.length + (group.pendingItems?.length || 0);
+                    const groupCompliance = groupProgramadas > 0 ? Math.round((group.completedItems.length / groupProgramadas) * 100) : 100;
 
                     return (
                       <div
@@ -5364,6 +5406,21 @@ return (
                                   {group.incidentItems.length} {group.incidentItems.length === 1 ? 'incidencia / traslado' : 'incidencias / traslados'}
                                 </span>
                               )}
+                              {group.pendingItems && group.pendingItems.length > 0 && (
+                                <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md text-[11px]">
+                                  {group.pendingItems.length} pendientes
+                                </span>
+                              )}
+                              <span className="inline-flex items-center gap-1 font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md text-[11px] border border-slate-200">
+                                Total: {groupProgramadas} programadas
+                              </span>
+                              <span className={`inline-flex items-center gap-1 font-extrabold px-2 py-0.5 rounded-md text-[11px] border ${
+                                groupCompliance >= 80 ? 'text-emerald-900 bg-emerald-50 border-emerald-200' :
+                                groupCompliance >= 50 ? 'text-blue-900 bg-blue-50 border-blue-200' :
+                                'text-rose-900 bg-rose-50 border-rose-200'
+                              }`}>
+                                {groupCompliance}% efectividad
+                              </span>
                             </div>
                           </div>
 
