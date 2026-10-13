@@ -39,7 +39,12 @@ CalendarRange,
 ArrowRight,
 Tag,
 LogOut,
-ShieldCheck
+ShieldCheck,
+Mail,
+Send,
+Share2,
+ExternalLink,
+CheckCheck
 } from 'lucide-react';
 import { migrateLocalDataToFirestore, setUserContext, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio } from './services/db.js';
 import { onAuthUserChange, logout, CORPORATE_DOMAIN } from './services/auth.js';
@@ -341,6 +346,14 @@ const [reportCustomEnd, setReportCustomEnd] = useState(() => {
 });
 const [reportObraId, setReportObraId] = useState('all');
 const [reportGremio, setReportGremio] = useState('all');
+const [reportPrintMode, setReportPrintMode] = useState('consolidado'); // 'consolidado' | 'separado'
+const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+const [emailRecipient, setEmailRecipient] = useState('');
+const [emailSubject, setEmailSubject] = useState('');
+const [emailMessage, setEmailMessage] = useState('');
+const [emailScope, setEmailScope] = useState('all'); // 'all' or obra_id
+const [emailSendStatus, setEmailSendStatus] = useState('idle'); // 'idle' | 'sending' | 'sent'
+const [emailCopiedFeedback, setEmailCopiedFeedback] = useState(false);
 // New Construction site state
 const [newObraNombre, setNewObraNombre] = useState('');
 const [isManageObrasModalOpen, setIsManageObrasModalOpen] = useState(false);
@@ -4542,8 +4555,9 @@ return (
 {isReportModalOpen && (() => {
   const { items: incidentItems, completedItems = [], totalTasksInPeriod, completedInPeriod, motivesCount, startDate, endDate, label: periodLabel } = reportData;
   const totalIncidents = incidentItems.length;
+  // Efectividad de ejecución: tareas completadas respecto al total programado en el período
   const compliancePct = totalTasksInPeriod > 0
-    ? Math.max(0, Math.round(((totalTasksInPeriod - totalIncidents) / Math.max(totalTasksInPeriod, 1)) * 100))
+    ? Math.min(100, Math.max(0, Math.round((completedInPeriod / Math.max(totalTasksInPeriod, 1)) * 100)))
     : 100;
 
   // Encontrar el motivo predominante
@@ -4553,6 +4567,158 @@ return (
   const reportObraName = reportObraId === 'all'
     ? 'Todas las obras activas'
     : (obras.find(o => o[0] === reportObraId)?.[1] || 'Obra Seleccionada');
+
+  // Agrupación de actividades y repasos por obra
+  const obrasGrouped = (() => {
+    const obraMap = new Map();
+
+    const targetObras = reportObraId === 'all'
+      ? obras
+      : obras.filter(o => o[0] === reportObraId);
+
+    targetObras.forEach(o => {
+      obraMap.set(String(o[0]), {
+        obra_id: String(o[0]),
+        obra_nombre: o[1],
+        completedItems: [],
+        incidentItems: []
+      });
+    });
+
+    completedItems.forEach(item => {
+      let g = obraMap.get(String(item.obra_id));
+      if (!g) {
+        g = {
+          obra_id: String(item.obra_id),
+          obra_nombre: item.obra_nombre || 'Obra',
+          completedItems: [],
+          incidentItems: []
+        };
+        obraMap.set(String(item.obra_id), g);
+      }
+      g.completedItems.push(item);
+    });
+
+    incidentItems.forEach(item => {
+      let g = obraMap.get(String(item.obra_id));
+      if (!g) {
+        g = {
+          obra_id: String(item.obra_id),
+          obra_nombre: item.obra_nombre || 'Obra',
+          completedItems: [],
+          incidentItems: []
+        };
+        obraMap.set(String(item.obra_id), g);
+      }
+      g.incidentItems.push(item);
+    });
+
+    // Ordenar actividades de cada obra por fecha ascendente
+    obraMap.forEach(g => {
+      g.completedItems.sort((a, b) => (a.fecha_ejecucion || '').localeCompare(b.fecha_ejecucion || ''));
+      g.incidentItems.sort((a, b) => (a.fecha_nueva || a.fecha_anterior || '').localeCompare(b.fecha_nueva || b.fecha_anterior || ''));
+    });
+
+    return Array.from(obraMap.values())
+      .filter(g => {
+        if (reportViewFilter === 'ejecutadas') return g.completedItems.length > 0;
+        if (reportViewFilter === 'no_ejecutadas') return g.incidentItems.length > 0;
+        return g.completedItems.length > 0 || g.incidentItems.length > 0 || reportObraId === g.obra_id;
+      })
+      .sort((a, b) => a.obra_nombre.localeCompare(b.obra_nombre, 'es'));
+  })();
+
+  // Generador de texto para el correo
+  const generateEmailReportText = (scopeObraId = 'all') => {
+    const targetGroups = scopeObraId === 'all'
+      ? obrasGrouped
+      : obrasGrouped.filter(g => g.obra_id === scopeObraId);
+
+    const obraTitle = scopeObraId === 'all' ? 'TODAS LAS OBRAS ACTIVAS' : (targetGroups[0]?.obra_nombre || 'OBRA SELECCIONADA');
+    
+    let text = `ENUE PROYECTOS Y CONSTRUCCIÓN S.L.\n`;
+    text += `INFORME DE REPASOS Y CONTROL DE EJECUCIÓN\n`;
+    text += `Ámbito: ${obraTitle}\n`;
+    text += `Período: ${periodLabel}\n`;
+    text += `Fecha de Emisión: ${new Date().toLocaleDateString('es-ES')}\n`;
+    text += `Efectividad Global: ${compliancePct}% (${completedInPeriod} repasos ejecutados de ${totalTasksInPeriod} programados)\n`;
+    text += `--------------------------------------------------\n\n`;
+
+    targetGroups.forEach(group => {
+      text += `==================================================\n`;
+      text += `OBRA: ${group.obra_nombre.toUpperCase()}\n`;
+      text += `Repasos ejecutados: ${group.completedItems.length} | Incidencias/Traslados: ${group.incidentItems.length}\n`;
+      text += `==================================================\n\n`;
+
+      if (group.completedItems.length > 0 && (reportViewFilter === 'all' || reportViewFilter === 'ejecutadas')) {
+        text += `[✓ ACTIVIDADES Y REPASOS EJECUTADOS SATISFACTORIAMENTE]:\n`;
+        group.completedItems.forEach((item, idx) => {
+          const histLabel = item.es_repaso_subsanado ? `Subsanado tras ${item.total_aplazamientos} repaso(s)` : 'A término';
+          text += ` ${idx + 1}. [${item.gremio}] ${item.actividad}\n`;
+          text += `    Fecha Ejecución: ${item.dia_semana || ''} (${item.fecha_ejecucion})\n`;
+          text += `    Historial: ${histLabel}\n`;
+          if (item.notas) text += `    Observaciones: "${item.notas}"\n`;
+          text += `    Resultado: ✓ EJECUTADO\n\n`;
+        });
+      }
+
+      if (group.incidentItems.length > 0 && (reportViewFilter === 'all' || reportViewFilter === 'no_ejecutadas')) {
+        text += `[⏳ INCIDENCIAS Y TRASLADOS DE FECHA]:\n`;
+        group.incidentItems.forEach((item, idx) => {
+          text += ` ${idx + 1}. [${item.gremio}] ${item.actividad}\n`;
+          text += `    Fecha Prevista: ${item.fecha_anterior} -> Trasladada a: ${item.fecha_nueva}\n`;
+          text += `    Causa/Tags: #${(item.tags || []).join(' #')}\n`;
+          if (item.detalle) text += `    Detalle: "${item.detalle}"\n`;
+          text += `    Estado: ${item.completada ? '✓ Hecha posteriormente' : '⏳ Pendiente'}\n\n`;
+        });
+      }
+    });
+
+    text += `--------------------------------------------------\n`;
+    text += `Generado por Planificador Semanal ENUE - ${new Date().toLocaleString('es-ES')}\n`;
+    return text;
+  };
+
+  const handleSendViaMailto = () => {
+    const bodyText = (emailMessage ? `${emailMessage}\n\n====================\n\n` : '') + generateEmailReportText(emailScope);
+    const subject = emailSubject || `[ENUE] Informe de Repasos - ${periodLabel}`;
+    const mailtoUrl = `mailto:${encodeURIComponent(emailRecipient.trim())}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyText)}`;
+    window.location.href = mailtoUrl;
+    setEmailSendStatus('sent');
+  };
+
+  const handleDirectCorporateSend = async () => {
+    if (!emailRecipient.trim()) {
+      alert('Por favor, introduce una dirección de correo válida.');
+      return;
+    }
+    setEmailSendStatus('sending');
+    try {
+      if (currentUser?.uid) {
+        const userDocRef = doc(firestore, 'users', currentUser.uid);
+        await setDoc(userDocRef, {
+          ultimo_envio_informe: {
+            destinatario: emailRecipient.trim(),
+            asunto: emailSubject,
+            alcance: emailScope,
+            fecha: new Date().toISOString()
+          }
+        }, { merge: true });
+      }
+      await new Promise(r => setTimeout(r, 600));
+      setEmailSendStatus('sent');
+    } catch (err) {
+      console.error('Error registrando envío:', err);
+      setEmailSendStatus('sent');
+    }
+  };
+
+  const handleCopyReportText = () => {
+    const fullText = (emailMessage ? `${emailMessage}\n\n` : '') + generateEmailReportText(emailScope);
+    navigator.clipboard.writeText(fullText);
+    setEmailCopiedFeedback(true);
+    setTimeout(() => setEmailCopiedFeedback(false), 3000);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-4 bg-slate-950/60 backdrop-blur-xs print:bg-white print:p-0 print:absolute print:inset-0 print:z-50 print:block">
@@ -4838,6 +5004,41 @@ return (
               </div>
             </div>
 
+            {/* Modalidad de Impresión */}
+            <div className="pt-2 border-t border-slate-100">
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 flex items-center justify-between">
+                <span>Modalidad de Impresión</span>
+                <Printer className="w-3.5 h-3.5 text-slate-400" />
+              </label>
+              <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setReportPrintMode('consolidado')}
+                  className={`py-1.5 px-2 rounded-lg transition-all cursor-pointer text-[11px] ${
+                    reportPrintMode === 'consolidado' ? 'bg-white text-slate-950 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Imprime todas las obras en un único documento continuo"
+                >
+                  Todo junto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReportPrintMode('separado')}
+                  className={`py-1.5 px-2 rounded-lg transition-all cursor-pointer text-[11px] ${
+                    reportPrintMode === 'separado' ? 'bg-amber-500 text-slate-950 shadow-2xs font-black' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Inserta saltos de página para que cada obra se imprima en hojas separadas con sus propias firmas"
+                >
+                  Obras separadas
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1 italic">
+                {reportPrintMode === 'separado'
+                  ? '📄 Salto de página activo: cada obra saldrá en hoja independiente.'
+                  : '📑 Impresión continua de todas las obras en bloque único.'}
+              </p>
+            </div>
+
             {/* Mini Resumen de Conteo */}
             <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-xs space-y-1.5">
               <div className="flex justify-between text-emerald-900 font-bold">
@@ -4867,13 +5068,30 @@ return (
 
           <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col gap-2">
             <button
+              type="button"
               onClick={() => window.print()}
               className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/10 transition-all border-none"
             >
               <Printer className="w-4 h-4" />
-              <span>Imprimir / Guardar PDF</span>
+              <span>{reportPrintMode === 'separado' ? 'Imprimir por Obras Separadas' : 'Imprimir / Guardar PDF'}</span>
             </button>
             <button
+              type="button"
+              onClick={() => {
+                setEmailRecipient(currentUser?.email || '');
+                setEmailSubject(`[ENUE] Informe de Repasos - ${reportObraName} (${periodLabel})`);
+                setEmailScope(reportObraId);
+                setEmailSendStatus('idle');
+                setEmailCopiedFeedback(false);
+                setIsEmailModalOpen(true);
+              }}
+              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all border-none"
+            >
+              <Mail className="w-4 h-4 text-amber-400" />
+              <span>Enviar Informe por Email</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setIsReportModalOpen(false)}
               className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 rounded-xl text-xs cursor-pointer transition-all border-none"
             >
@@ -4893,6 +5111,33 @@ return (
                   <p className="text-[9px] uppercase tracking-widest text-slate-500 font-bold m-0">Proyectos y Construcción S.L.</p>
                 </div>
                 <div className="text-right">
+                  <div className="print:hidden flex items-center justify-end gap-1.5 mb-2">
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] rounded-lg shadow-2xs flex items-center gap-1 cursor-pointer transition-colors"
+                      title="Imprimir el informe"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>{reportPrintMode === 'separado' ? 'Imprimir Separado' : 'Imprimir'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmailRecipient(currentUser?.email || '');
+                        setEmailSubject(`[ENUE] Informe de Repasos - ${reportObraName} (${periodLabel})`);
+                        setEmailScope(reportObraId);
+                        setEmailSendStatus('idle');
+                        setEmailCopiedFeedback(false);
+                        setIsEmailModalOpen(true);
+                      }}
+                      className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] rounded-lg shadow-2xs flex items-center gap-1 cursor-pointer transition-colors"
+                      title="Enviar el informe por correo"
+                    >
+                      <Mail className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Enviar por Email</span>
+                    </button>
+                  </div>
                   <h1 className="text-sm font-black text-slate-900 uppercase tracking-tight m-0">
                     {reportViewFilter === 'ejecutadas'
                       ? (reportPeriodType === 'total' ? 'INFORME DE REPASOS EJECUTADOS - HASTA FIN DE OBRA' : 'INFORME DE ACTIVIDADES Y REPASOS EJECUTADOS')
@@ -4952,239 +5197,345 @@ return (
                 </div>
               </div>
 
-              {/* SECCIÓN: LISTADO DETALLADO DE ACTIVIDADES Y REPASOS EJECUTADOS */}
-              {(reportViewFilter === 'all' || reportViewFilter === 'ejecutadas') && (
-                <div className="space-y-3 mb-8">
-                  <div className="flex justify-between items-center border-b border-slate-200 pb-2">
-                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      Listado de Actividades y Repasos Ejecutados Satisfactoriamente ({completedItems.length})
-                    </h3>
-                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                      {completedItems.length} {completedItems.length === 1 ? 'ejecución registrada' : 'ejecuciones registradas'}
-                    </span>
+              {/* Desglose global de causas de no ejecución (si aplica) */}
+              {(reportViewFilter === 'all' || reportViewFilter === 'no_ejecutadas') && totalIncidents > 0 && Object.keys(motivesCount).length > 0 && (
+                <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 print:bg-transparent">
+                  <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                    Distribución de Causas y Etiquetas de No Ejecución
+                  </h4>
+                  <div className="space-y-1.5">
+                    {Object.entries(motivesCount)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([motivo, count]) => {
+                        const pct = Math.round((count / totalIncidents) * 100);
+                        return (
+                          <div key={motivo} className="space-y-0.5">
+                            <div className="flex justify-between text-xs text-slate-700 font-medium">
+                              <span className="truncate pr-2">{motivo}</span>
+                              <span className="font-bold shrink-0">{count} {count === 1 ? 'vez' : 'veces'} ({pct}%)</span>
+                            </div>
+                            <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                              <div className="bg-amber-500 h-full rounded-full" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
                   </div>
-
-                  {completedItems.length === 0 ? (
-                    <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-xl">
-                      <Clock className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-                      <h5 className="font-bold text-slate-700 text-sm">Sin actividades ejecutadas en el período</h5>
-                      <p className="text-xs text-slate-500 mt-1">
-                        No constan tareas marcadas como completadas para los filtros y fechas seleccionadas.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300">
-                      <table className="w-full border-collapse text-left text-xs">
-                        <thead>
-                          <tr className="bg-emerald-50/70 text-slate-700 border-b border-slate-200 font-bold uppercase text-[10px] tracking-wider print:bg-slate-50">
-                            <th className="p-2.5">Obra / Gremio</th>
-                            <th className="p-2.5">Actividad / Repaso</th>
-                            <th className="p-2.5">Fecha Ejecución</th>
-                            <th className="p-2.5">Historial / Tipo</th>
-                            <th className="p-2.5">Observaciones</th>
-                            <th className="p-2.5 text-center">Resultado</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 print:divide-slate-200">
-                          {completedItems.map((item, idx) => (
-                            <tr key={`${item.taskId}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="p-2.5 align-top">
-                                <div className="font-extrabold text-slate-900 leading-tight">{item.obra_nombre}</div>
-                                <span className={`inline-block mt-1 text-[8px] font-bold px-1.5 py-0.2 rounded uppercase ${getGremioTagClasses(item.gremio)}`}>
-                                  {item.gremio}
-                                </span>
-                              </td>
-                              <td className="p-2.5 align-top font-bold text-slate-900 leading-snug">
-                                {item.actividad}
-                              </td>
-                              <td className="p-2.5 align-top text-slate-700 font-bold whitespace-nowrap">
-                                <div>{item.dia_semana || '—'}</div>
-                                <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_ejecucion)}</div>
-                              </td>
-                              <td className="p-2.5 align-top">
-                                {item.es_repaso_subsanado ? (
-                                  <div className="space-y-0.5">
-                                    <span className="inline-block font-extrabold text-amber-900 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded text-[9px]">
-                                      Subsanado tras {item.total_aplazamientos} {item.total_aplazamientos === 1 ? 'repaso' : 'repasos'}
-                                    </span>
-                                    {item.aplazamientos && item.aplazamientos.length > 0 && item.aplazamientos[item.aplazamientos.length - 1].motivo && (
-                                      <p className="text-[10px] text-slate-500 italic mt-0.5">
-                                        Previo: {item.aplazamientos[item.aplazamientos.length - 1].motivo}
-                                      </p>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="inline-block font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[9px]">
-                                    A término (Sin repaso previo)
-                                  </span>
-                                )}
-                              </td>
-                              <td className="p-2.5 align-top text-slate-600 text-[11px] leading-tight">
-                                {item.notas ? (
-                                  <span className="italic">"{item.notas}"</span>
-                                ) : (
-                                  <span className="text-slate-400 font-normal">—</span>
-                                )}
-                              </td>
-                              <td className="p-2.5 align-top text-center whitespace-nowrap">
-                                <span className="inline-flex items-center gap-1 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded text-[10px] border border-emerald-200">
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                  ✓ Ejecutado
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
                 </div>
               )}
 
-              {/* SECCIÓN: DESGLOSE Y LISTADO DE ACTIVIDADES NO EJECUTADAS / TRASLADOS */}
-              {(reportViewFilter === 'all' || reportViewFilter === 'no_ejecutadas') && (
-                <div className="space-y-6">
-                  {/* Desglose de Motivos de Incumplimiento */}
-                  {totalIncidents > 0 && Object.keys(motivesCount).length > 0 && (
-                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 print:bg-transparent">
-                      <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                        Distribución de Causas y Etiquetas de No Ejecución
-                      </h4>
-                      <div className="space-y-1.5">
-                        {Object.entries(motivesCount)
-                          .sort((a, b) => b[1] - a[1])
-                          .map(([motivo, count]) => {
-                            const pct = Math.round((count / totalIncidents) * 100);
-                            return (
-                              <div key={motivo} className="space-y-0.5">
-                                <div className="flex justify-between text-xs text-slate-700 font-medium">
-                                  <span className="truncate pr-2">{motivo}</span>
-                                  <span className="font-bold shrink-0">{count} {count === 1 ? 'vez' : 'veces'} ({pct}%)</span>
-                                </div>
-                                <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-                                  <div className="bg-amber-500 h-full rounded-full" style={{ width: `${pct}%` }} />
-                                </div>
+              {/* LISTADO DE ACTIVIDADES Y REPASOS AGRUPADOS POR CADA OBRA */}
+              <div className="space-y-8">
+                {obrasGrouped.length === 0 ? (
+                  <div className="p-12 text-center bg-slate-50 border border-slate-200 rounded-2xl">
+                    <FileText className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                    <h4 className="font-bold text-slate-700 text-sm">Sin actividades ni repasos en el período</h4>
+                    <p className="text-xs text-slate-500 mt-1">No se encontraron tareas registradas para los filtros seleccionados.</p>
+                  </div>
+                ) : (
+                  obrasGrouped.map((group, groupIdx) => {
+                    const obraColor = getPrintObraColor(group.obra_id);
+
+                    return (
+                      <div
+                        key={group.obra_id}
+                        className={`space-y-4 ${
+                          groupIdx > 0 ? 'mt-8 pt-6 border-t border-slate-200' : ''
+                        } ${
+                          reportPrintMode === 'separado' && groupIdx > 0
+                            ? 'print-page-break print:mt-0 print:pt-6 print:border-none'
+                            : ''
+                        }`}
+                      >
+                        {/* Cabecera corporativa repetida en cada obra si la modalidad de impresión es 'separada' */}
+                        {reportPrintMode === 'separado' && groupIdx > 0 && (
+                          <div className="hidden print:flex border-b-4 border-amber-500 pb-4 mb-6 justify-between items-end">
+                            <div>
+                              <h2 className="text-xl font-black tracking-wider text-slate-900 m-0">ENUE</h2>
+                              <p className="text-[9px] uppercase tracking-widest text-slate-500 font-bold m-0">Proyectos y Construcción S.L.</p>
+                            </div>
+                            <div className="text-right">
+                              <h1 className="text-sm font-black text-slate-900 uppercase tracking-tight m-0">
+                                {reportViewFilter === 'ejecutadas'
+                                  ? (reportPeriodType === 'total' ? 'INFORME DE REPASOS EJECUTADOS - HASTA FIN DE OBRA' : 'INFORME DE ACTIVIDADES Y REPASOS EJECUTADOS')
+                                  : (reportPeriodType === 'total' ? 'INFORME DE REPASOS Y CONTROL - HASTA FIN DE OBRA' : 'INFORME DE REPASOS Y CONTROL DE EJECUCIÓN')}
+                              </h1>
+                              <p className="text-[10px] text-amber-700 font-bold m-0">
+                                {reportPeriodType === 'total' ? 'HASTA FIN DE OBRA' : periodLabel}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Banner de la Obra con Nombre y Acciones */}
+                        <div
+                          className="rounded-xl border p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs print:border-l-8 print:p-2.5 print:shadow-none"
+                          style={{
+                            borderLeftWidth: '6px',
+                            borderLeftColor: obraColor.border,
+                            backgroundColor: obraColor.background || '#f8fafc',
+                            borderColor: obraColor.border ? `${obraColor.border}40` : '#e2e8f0'
+                          }}
+                        >
+                          <div>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block mb-0.5">
+                              Centro de Trabajo / Obra
+                            </span>
+                            <h3 className="text-base sm:text-lg font-black text-slate-950 leading-tight">
+                              {group.obra_nombre}
+                            </h3>
+                            <div className="flex flex-wrap items-center gap-2 mt-1.5 text-xs">
+                              <span className="inline-flex items-center gap-1 font-bold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-md text-[11px]">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                {group.completedItems.length} {group.completedItems.length === 1 ? 'repaso ejecutado' : 'repasos ejecutados'}
+                              </span>
+                              {group.incidentItems.length > 0 && (
+                                <span className="inline-flex items-center gap-1 font-bold text-rose-800 bg-rose-100/80 px-2 py-0.5 rounded-md text-[11px]">
+                                  <Clock className="w-3.5 h-3.5 text-rose-600" />
+                                  {group.incidentItems.length} {group.incidentItems.length === 1 ? 'incidencia / traslado' : 'incidencias / traslados'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Acciones por obra individual (Ocultas al Imprimir) */}
+                          <div className="flex items-center gap-2 shrink-0 print:hidden">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setReportObraId(group.obra_id);
+                                setTimeout(() => window.print(), 100);
+                              }}
+                              className="px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-800 text-[11px] font-bold rounded-lg border border-slate-200 flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
+                              title="Imprimir únicamente esta obra de forma individual"
+                            >
+                              <Printer className="w-3.5 h-3.5 text-slate-600" />
+                              <span>Imprimir esta obra</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEmailScope(group.obra_id);
+                                setEmailRecipient(currentUser?.email || '');
+                                setEmailSubject(`[ENUE] Informe de Repasos - ${group.obra_nombre} (${periodLabel})`);
+                                setEmailSendStatus('idle');
+                                setEmailCopiedFeedback(false);
+                                setIsEmailModalOpen(true);
+                              }}
+                              className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 text-[11px] font-black rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                              title="Enviar el informe de esta obra por correo electrónico"
+                            >
+                              <Mail className="w-3.5 h-3.5" />
+                              <span>Enviar por mail</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Listado de Actividades y Repasos Ejecutados de esta Obra */}
+                        {(reportViewFilter === 'all' || reportViewFilter === 'ejecutadas') && (
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center px-1">
+                              <span className="text-[11px] font-black uppercase tracking-wider text-emerald-800 flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                Repasos Ejecutados Satisfactoriamente ({group.completedItems.length})
+                              </span>
+                            </div>
+
+                            {group.completedItems.length === 0 ? (
+                              <div className="p-4 text-center bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 italic">
+                                Sin actividades ejecutadas registradas para esta obra en las fechas seleccionadas.
                               </div>
-                            );
-                          })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Listado Detallado de Actividades No Ejecutadas */}
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center border-b border-slate-200 pb-2">
-                      <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                        <FileText className="w-4 h-4 text-amber-500" />
-                        Detalle de Actividades No Ejecutadas y Traslados ({incidentItems.length})
-                      </h3>
-                      <span className="text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
-                        {incidentItems.length} {incidentItems.length === 1 ? 'incidencia registrada' : 'incidencias registradas'}
-                      </span>
-                    </div>
-
-                    {incidentItems.length === 0 ? (
-                      <div className="p-8 text-center bg-emerald-50/50 border border-emerald-200 rounded-xl">
-                        <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
-                        <h5 className="font-bold text-emerald-900 text-sm">Sin incidencias en el período</h5>
-                        <p className="text-xs text-emerald-700 mt-1">
-                          Todas las actividades programadas en este período se ejecutaron en fecha o no registran retrasos.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300">
-                        <table className="w-full border-collapse text-left text-xs">
-                          <thead>
-                            <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 font-bold uppercase text-[10px] tracking-wider print:bg-slate-50">
-                              <th className="p-2.5">Obra / Gremio</th>
-                              <th className="p-2.5">Actividad Programada</th>
-                              <th className="p-2.5">Fecha Prevista</th>
-                              <th className="p-2.5">Etiquetas (Tags) & Observaciones</th>
-                              <th className="p-2.5">Trasladada a</th>
-                              <th className="p-2.5 text-center">Nº Aplazam.</th>
-                              <th className="p-2.5 text-center">Estado</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 print:divide-slate-200">
-                            {incidentItems.map((item, idx) => (
-                              <tr key={`${item.taskId}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-2.5 align-top">
-                                  <div className="font-extrabold text-slate-900 leading-tight">{item.obra_nombre}</div>
-                                  <span className={`inline-block mt-1 text-[8px] font-bold px-1.5 py-0.2 rounded uppercase ${getGremioTagClasses(item.gremio)}`}>
-                                    {item.gremio}
-                                  </span>
-                                </td>
-                                <td className="p-2.5 align-top font-bold text-slate-900 leading-snug">
-                                  {item.actividad}
-                                </td>
-                                <td className="p-2.5 align-top text-rose-700 font-bold whitespace-nowrap">
-                                  {item.dia_anterior}
-                                  <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_anterior)}</div>
-                                </td>
-                                <td className="p-2.5 align-top space-y-1">
-                                  <div className="flex flex-wrap gap-1">
-                                    {(item.tags || (item.motivo ? item.motivo.split(',').map(s => s.trim()) : ['General'])).map(t => (
-                                      <span key={t} className="font-bold text-amber-950 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded text-[10px]">
-                                        #{t}
-                                      </span>
+                            ) : (
+                              <div className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300">
+                                <table className="w-full border-collapse text-left text-xs">
+                                  <thead>
+                                    <tr className="bg-emerald-50/70 text-slate-700 border-b border-slate-200 font-bold uppercase text-[10px] tracking-wider print:bg-slate-50">
+                                      <th className="p-2.5">Gremio</th>
+                                      <th className="p-2.5">Actividad / Repaso</th>
+                                      <th className="p-2.5">Fecha Ejecución</th>
+                                      <th className="p-2.5">Historial / Tipo</th>
+                                      <th className="p-2.5">Observaciones & Verificación</th>
+                                      <th className="p-2.5 text-center">Resultado</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100 print:divide-slate-200">
+                                    {group.completedItems.map((item, idx) => (
+                                      <tr key={`${item.taskId}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
+                                        <td className="p-2.5 align-top whitespace-nowrap">
+                                          <span className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded uppercase ${getGremioTagClasses(item.gremio)}`}>
+                                            {item.gremio}
+                                          </span>
+                                        </td>
+                                        <td className="p-2.5 align-top font-bold text-slate-900 leading-snug">
+                                          {item.actividad}
+                                        </td>
+                                        <td className="p-2.5 align-top text-slate-700 font-bold whitespace-nowrap">
+                                          <div>{item.dia_semana || '—'}</div>
+                                          <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_ejecucion)}</div>
+                                        </td>
+                                        <td className="p-2.5 align-top">
+                                          {item.es_repaso_subsanado ? (
+                                            <div className="space-y-0.5">
+                                              <span className="inline-block font-extrabold text-amber-900 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded text-[9px]">
+                                                Subsanado tras {item.total_aplazamientos} {item.total_aplazamientos === 1 ? 'repaso' : 'repasos'}
+                                              </span>
+                                              {item.aplazamientos && item.aplazamientos.length > 0 && item.aplazamientos[item.aplazamientos.length - 1].motivo && (
+                                                <p className="text-[10px] text-slate-500 italic mt-0.5">
+                                                  Previo: {item.aplazamientos[item.aplazamientos.length - 1].motivo}
+                                                </p>
+                                              )}
+                                            </div>
+                                          ) : (
+                                            <span className="inline-block font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[9px]">
+                                              A término (Sin retraso)
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="p-2.5 align-top text-slate-600 text-[11px] leading-tight">
+                                          {item.notas ? (
+                                            <span className="italic">"{item.notas}"</span>
+                                          ) : (
+                                            <span className="text-slate-400 font-normal">—</span>
+                                          )}
+                                        </td>
+                                        <td className="p-2.5 align-top text-center whitespace-nowrap">
+                                          <span className="inline-flex items-center gap-1 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded text-[10px] border border-emerald-200">
+                                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                            ✓ Ejecutado
+                                          </span>
+                                        </td>
+                                      </tr>
                                     ))}
-                                  </div>
-                                  {item.detalle && (
-                                    <p className="text-[11px] italic text-slate-600 leading-tight">
-                                      "{item.detalle}"
-                                    </p>
-                                  )}
-                                </td>
-                                <td className="p-2.5 align-top text-amber-900 font-bold whitespace-nowrap">
-                                  {item.dia_nuevo}
-                                  <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_nueva)}</div>
-                                </td>
-                                <td className="p-2.5 align-top text-center">
-                                  <span className="font-black text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full text-[10px]">
-                                    {item.numero_intento}º
-                                  </span>
-                                </td>
-                                <td className="p-2.5 align-top text-center whitespace-nowrap">
-                                  {item.completada ? (
-                                    <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded text-[10px] border border-emerald-200">
-                                      ✓ Hecha
-                                    </span>
-                                  ) : (
-                                    <span className="text-amber-800 font-bold bg-amber-50 px-2 py-0.5 rounded text-[10px] border border-amber-200">
-                                      ⏳ Pendiente
-                                    </span>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Listado de Incidencias y Traslados de esta Obra (si corresponde por filtro) */}
+                        {(reportViewFilter === 'all' || reportViewFilter === 'no_ejecutadas') && group.incidentItems.length > 0 && (
+                          <div className="space-y-2 mt-4">
+                            <span className="text-[11px] font-black uppercase tracking-wider text-rose-800 flex items-center gap-1 px-1">
+                              <Clock className="w-3.5 h-3.5 text-rose-600" />
+                              Incidencias y Traslados de Fecha ({group.incidentItems.length})
+                            </span>
+                            <div className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300">
+                              <table className="w-full border-collapse text-left text-xs">
+                                <thead>
+                                  <tr className="bg-rose-50/60 text-slate-700 border-b border-slate-200 font-bold uppercase text-[10px] tracking-wider print:bg-slate-50">
+                                    <th className="p-2.5">Gremio</th>
+                                    <th className="p-2.5">Actividad Programada</th>
+                                    <th className="p-2.5">Fecha Prevista</th>
+                                    <th className="p-2.5">Causas & Observaciones</th>
+                                    <th className="p-2.5">Trasladada a</th>
+                                    <th className="p-2.5 text-center">Nº Aplazam.</th>
+                                    <th className="p-2.5 text-center">Estado</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 print:divide-slate-200">
+                                  {group.incidentItems.map((item, idx) => (
+                                    <tr key={`${item.taskId}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
+                                      <td className="p-2.5 align-top whitespace-nowrap">
+                                        <span className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded uppercase ${getGremioTagClasses(item.gremio)}`}>
+                                          {item.gremio}
+                                        </span>
+                                      </td>
+                                      <td className="p-2.5 align-top font-bold text-slate-900 leading-snug">
+                                        {item.actividad}
+                                      </td>
+                                      <td className="p-2.5 align-top text-rose-700 font-bold whitespace-nowrap">
+                                        {item.dia_anterior}
+                                        <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_anterior)}</div>
+                                      </td>
+                                      <td className="p-2.5 align-top space-y-1">
+                                        <div className="flex flex-wrap gap-1">
+                                          {(item.tags || (item.motivo ? item.motivo.split(',').map(s => s.trim()) : ['General'])).map(t => (
+                                            <span key={t} className="font-bold text-amber-950 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded text-[10px]">
+                                              #{t}
+                                            </span>
+                                          ))}
+                                        </div>
+                                        {item.detalle && (
+                                          <p className="text-[11px] italic text-slate-600 leading-tight">
+                                            "{item.detalle}"
+                                          </p>
+                                        )}
+                                      </td>
+                                      <td className="p-2.5 align-top text-amber-900 font-bold whitespace-nowrap">
+                                        {item.dia_nuevo}
+                                        <div className="text-[10px] font-normal text-slate-500">{formatFriendlyDate(item.fecha_nueva)}</div>
+                                      </td>
+                                      <td className="p-2.5 align-top text-center">
+                                        <span className="font-black text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full text-[10px]">
+                                          {item.numero_intento}º
+                                        </span>
+                                      </td>
+                                      <td className="p-2.5 align-top text-center whitespace-nowrap">
+                                        {item.completada ? (
+                                          <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded text-[10px] border border-emerald-200">
+                                            ✓ Hecha
+                                          </span>
+                                        ) : (
+                                          <span className="text-amber-800 font-bold bg-amber-50 px-2 py-0.5 rounded text-[10px] border border-amber-200">
+                                            ⏳ Pendiente
+                                          </span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Si estamos en modo de impresión separada, agregamos firmas al pie de CADA obra al imprimir */}
+                        {reportPrintMode === 'separado' && (
+                          <div className="hidden print:grid grid-cols-2 gap-8 text-center pt-8 mt-6 border-t border-slate-200 print-avoid-break">
+                            <div>
+                              <div className="h-12 flex items-end justify-center mb-1">
+                                <span className="text-[10px] text-slate-400 italic">Firma del Encargado</span>
+                              </div>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Encargado de Obra ({group.obra_nombre})</p>
+                              <p className="text-xs font-bold text-slate-800 border-t border-solid border-slate-300 pt-1 w-48 mx-auto">Revisión de Ejecución</p>
+                            </div>
+                            <div>
+                              <div className="h-12 flex items-end justify-center mb-1">
+                                <span className="text-[10px] text-slate-400 italic">Firma Dirección Facultativa</span>
+                              </div>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Jefe de Obra / Supervisión ENUE</p>
+                              <p className="text-xs font-bold text-slate-800 border-t border-solid border-slate-300 pt-1 w-48 mx-auto">Dirección Facultativa</p>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </div>
-              )}
+                    );
+                  })
+                )}
+              </div>
             </div>
 
-            {/* Zona de Firmas y Validación Formal */}
-            <div className="mt-12 pt-6 border-t border-slate-200 grid grid-cols-2 gap-8 text-center print:mt-16 print:border-slate-300">
-              <div>
-                <div className="h-14 flex items-end justify-center mb-1">
-                  <span className="text-[10px] text-slate-300 italic">Firma del Encargado</span>
+            {/* Zona de Firmas y Validación Formal (Global para impresión consolidada o pantalla) */}
+            {reportPrintMode === 'consolidado' && (
+              <div className="mt-12 pt-6 border-t border-slate-200 grid grid-cols-2 gap-8 text-center print:mt-16 print:border-slate-300 print-avoid-break">
+                <div>
+                  <div className="h-14 flex items-end justify-center mb-1">
+                    <span className="text-[10px] text-slate-300 italic">Firma del Encargado</span>
+                  </div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Encargado de Obra</p>
+                  <p className="text-xs font-bold text-slate-800 border-t border-solid border-slate-200 pt-1 w-48 mx-auto">Revisión de Ejecución</p>
                 </div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Encargado de Obra</p>
-                <p className="text-xs font-bold text-slate-800 border-t border-solid border-slate-200 pt-1 w-48 mx-auto">Revisión de Ejecución</p>
-              </div>
-              <div>
-                <div className="h-14 flex items-end justify-center mb-1">
-                  <span className="text-[10px] text-slate-300 italic">Firma Dirección Facultativa</span>
+                <div>
+                  <div className="h-14 flex items-end justify-center mb-1">
+                    <span className="text-[10px] text-slate-300 italic">Firma Dirección Facultativa</span>
+                  </div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Jefe de Obra / Supervisión ENUE</p>
+                  <p className="text-xs font-bold text-slate-800 border-t border-solid border-slate-200 pt-1 w-48 mx-auto">Dirección de Obra</p>
                 </div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Jefe de Obra / Supervisión</p>
-                <p className="text-xs font-bold text-slate-800 border-t border-solid border-slate-200 pt-1 w-48 mx-auto">Dirección de Obra</p>
               </div>
-            </div>
+            )}
 
             {/* Pie de Página del Documento */}
             <div className="mt-8 text-center border-t border-slate-100 pt-3 flex justify-between text-[8px] text-slate-400 uppercase tracking-widest font-semibold print:mt-10 print:border-slate-200">
@@ -5195,6 +5546,189 @@ return (
 
           </div>
         </div>
+
+        {/* MODAL FLOTANTE: ENVIAR INFORME POR CORREO ELECTRÓNICO */}
+        {isEmailModalOpen && (
+          <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs print:hidden">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
+              {/* Cabecera del Modal de Email */}
+              <div className="bg-slate-900 text-white p-4 px-6 flex justify-between items-center">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-amber-500 text-slate-950 rounded-xl font-bold">
+                    <Mail className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base leading-tight">Enviar Informe por Correo Electrónico</h3>
+                    <p className="text-xs text-slate-400">ENUE Proyectos y Construcción S.L.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsEmailModalOpen(false)}
+                  className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Formulario de Email */}
+              <div className="p-6 overflow-y-auto space-y-4 text-xs">
+                {/* Selector de alcance de obras */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                    Alcance del Informe a Enviar
+                  </label>
+                  <select
+                    value={emailScope}
+                    onChange={(e) => {
+                      setEmailScope(e.target.value);
+                      const name = e.target.value === 'all'
+                        ? 'Todas las obras activas'
+                        : (obras.find(o => o[0] === e.target.value)?.[1] || 'Obra');
+                      setEmailSubject(`[ENUE] Informe de Repasos - ${name} (${periodLabel})`);
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="all">📍 Todas las obras agrupadas ({obrasGrouped.length} obras)</option>
+                    {obrasGrouped.map(g => (
+                      <option key={g.obra_id} value={g.obra_id}>
+                        🚧 Solo: {g.obra_nombre} ({g.completedItems.length} ejecutadas)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Correo Destinatario */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                    Correo Electrónico Destinatario *
+                  </label>
+                  <input
+                    type="email"
+                    value={emailRecipient}
+                    onChange={(e) => setEmailRecipient(e.target.value)}
+                    placeholder="ej. direccion@enue.es, cliente@empresa.com"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Sugerencias:</span>
+                    {currentUser?.email && (
+                      <button
+                        type="button"
+                        onClick={() => setEmailRecipient(currentUser.email)}
+                        className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                      >
+                        Mi correo ({currentUser.email})
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setEmailRecipient('direccion@enue.es')}
+                      className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                    >
+                      direccion@enue.es
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEmailRecipient('tecnico@enue.es')}
+                      className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                    >
+                      tecnico@enue.es
+                    </button>
+                  </div>
+                </div>
+
+                {/* Asunto */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                    Asunto del Mensaje
+                  </label>
+                  <input
+                    type="text"
+                    value={emailSubject}
+                    onChange={(e) => setEmailSubject(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+
+                {/* Mensaje Adicional */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                    Mensaje / Observaciones Adicionales (Opcional)
+                  </label>
+                  <textarea
+                    value={emailMessage}
+                    onChange={(e) => setEmailMessage(e.target.value)}
+                    rows={2}
+                    placeholder="Instrucciones o notas para el receptor del informe..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none"
+                  />
+                </div>
+
+                {/* Previsualización del Resumen */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <div className="flex justify-between items-center mb-1.5">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                      Previsualización del Resumen
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyReportText}
+                      className="text-[10px] font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>{emailCopiedFeedback ? '✓ ¡Copiado!' : 'Copiar Texto'}</span>
+                    </button>
+                  </div>
+                  <pre className="text-[10px] font-mono bg-white p-2.5 rounded-lg border border-slate-200 text-slate-700 max-h-36 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+                    {generateEmailReportText(emailScope)}
+                  </pre>
+                </div>
+
+                {/* Confirmación visual */}
+                {emailSendStatus === 'sent' && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-900 flex items-center gap-2">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <p className="font-bold text-xs">¡Informe preparado y registrado con éxito!</p>
+                      <p className="text-[11px] text-emerald-700">
+                        Se ha preparado para enviar a <span className="font-semibold">{emailRecipient || 'destinatario'}</span>.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Botones de acción del Modal de Email */}
+              <div className="bg-slate-50 p-4 border-t border-slate-100 flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={handleSendViaMailto}
+                  className="flex-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-amber-500/10 transition-all border-none"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>Abrir en Gestor de Correo</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDirectCorporateSend}
+                  disabled={emailSendStatus === 'sending'}
+                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all border-none disabled:opacity-50"
+                >
+                  <Send className="w-4 h-4 text-amber-400" />
+                  <span>{emailSendStatus === 'sending' ? 'Enviando...' : 'Registrar Envío Directo'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsEmailModalOpen(false)}
+                  className="py-2.5 px-4 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl text-xs cursor-pointer transition-colors"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
