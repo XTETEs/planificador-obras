@@ -2,6 +2,9 @@ import { initializeApp, getApps } from 'firebase/app';
 import initSqlJs from 'sql.js';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   collection,
   doc,
   getDoc,
@@ -25,7 +28,22 @@ const firebaseConfig = {
 };
 
 export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-export const firestore = getFirestore(app);
+
+// Habilitar persistencia de caché local en el navegador con soporte para múltiples pestañas
+export const firestore = (() => {
+  if (typeof window !== 'undefined') {
+    try {
+      return initializeFirestore(app, {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager()
+        })
+      });
+    } catch (e) {
+      return getFirestore(app);
+    }
+  }
+  return getFirestore(app);
+})();
 
 // Estado de usuario y sincronización privada
 let currentUserId = null;
@@ -51,6 +69,17 @@ function notify(hasPending) {
   });
 }
 
+/**
+ * Guarda una instantánea de seguridad en localStorage para renderizado en 0ms y respaldo continuo
+ */
+function saveLocalSnapshot() {
+  if (!currentUserId || typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(`enue_cache_${currentUserId}_obras`, JSON.stringify(Array.from(obrasMap.values())));
+    localStorage.setItem(`enue_cache_${currentUserId}_tareas`, JSON.stringify(Array.from(tareasMap.values())));
+  } catch (e) {}
+}
+
 const DEFAULT_STARTER_OBRAS = [
   { id: '1', nombre: 'Residencial Las Palmeras (Fase 2)', activo: 1 },
   { id: '2', nombre: 'Reforma Integral Oficinas Centrales', activo: 1 },
@@ -59,77 +88,7 @@ const DEFAULT_STARTER_OBRAS = [
 ];
 
 /**
- * Si es el primer acceso de un usuario corporativo y no tiene obras privadas creadas:
- * 1) Intenta migrar las obras y tareas que existieran previamente en la raíz de Firestore
- * 2) Si no hay obras en la raíz, crea las obras iniciales de plantilla para empezar a planificar
- */
-async function seedUserInitialData(userId) {
-  try {
-    // 1. Intentar volcar datos existentes de la raíz si los hubiera
-    const rootObrasSnap = await getDocs(collection(firestore, 'obras'));
-    if (!rootObrasSnap.empty) {
-      const batch = writeBatch(firestore);
-      let count = 0;
-
-      rootObrasSnap.forEach((docSnap) => {
-        const data = docSnap.data();
-        const obraDoc = {
-          id: docSnap.id,
-          nombre: data.nombre || '',
-          activo: data.activo !== undefined ? Number(data.activo) : 1
-        };
-        batch.set(doc(firestore, 'users', userId, 'obras', docSnap.id), obraDoc);
-        obrasMap.set(docSnap.id, obraDoc);
-        count++;
-      });
-
-      try {
-        const rootTareasSnap = await getDocs(collection(firestore, 'tareas'));
-        rootTareasSnap.forEach((docSnap) => {
-          const data = docSnap.data();
-          const tareaDoc = {
-            id: docSnap.id,
-            obra_id: String(data.obra_id || ''),
-            fecha_semana: String(data.fecha_semana || ''),
-            dia_semana: String(data.dia_semana || ''),
-            actividad: String(data.actividad || ''),
-            gremio: String(data.gremio || 'Otros'),
-            completada: data.completada !== undefined ? Number(data.completada) : 0,
-            notas: String(data.notas || ''),
-            fecha_creado: String(data.fecha_creado || new Date().toISOString())
-          };
-          batch.set(doc(firestore, 'users', userId, 'tareas', docSnap.id), tareaDoc);
-          tareasMap.set(docSnap.id, tareaDoc);
-          count++;
-        });
-      } catch (err) {
-        console.warn('Tareas raíz no legibles o no disponibles:', err);
-      }
-
-      if (count > 0) {
-        await batch.commit();
-        return;
-      }
-    }
-  } catch (err) {
-    console.log('Lectura de obras raíz omitida o restringida por reglas:', err?.message);
-  }
-
-  // 2. Sembrar obras base iniciales si el usuario no tiene ninguna
-  try {
-    const batch = writeBatch(firestore);
-    for (const obra of DEFAULT_STARTER_OBRAS) {
-      batch.set(doc(firestore, 'users', userId, 'obras', obra.id), obra);
-      obrasMap.set(obra.id, obra);
-    }
-    await batch.commit();
-  } catch (err) {
-    console.error('Error al sembrar obras iniciales del usuario:', err);
-  }
-}
-
-/**
- * Conecta la base de datos a la sesión del usuario autenticado.
+ * Conecta la base de datos a la sesión del usuario corporativo autenticado.
  * Aísla 100% las obras y tareas bajo /users/{uid}/obras y /users/{uid}/tareas
  */
 export function setUserContext(user) {
@@ -160,6 +119,32 @@ export function setUserContext(user) {
     return initPromise;
   }
 
+  // 1. Cargar instantáneamente la caché local del usuario si existe (render en 0ms)
+  if (typeof window !== 'undefined') {
+    try {
+      const rawObras = localStorage.getItem(`enue_cache_${currentUserId}_obras`);
+      if (rawObras) {
+        const parsedObras = JSON.parse(rawObras);
+        if (Array.isArray(parsedObras)) {
+          parsedObras.forEach((o) => {
+            if (o && o.id) obrasMap.set(String(o.id), o);
+          });
+        }
+      }
+      const rawTareas = localStorage.getItem(`enue_cache_${currentUserId}_tareas`);
+      if (rawTareas) {
+        const parsedTareas = JSON.parse(rawTareas);
+        if (Array.isArray(parsedTareas)) {
+          parsedTareas.forEach((t) => {
+            if (t && t.id) tareasMap.set(String(t.id), t);
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Error leyendo caché local instantánea:', e);
+    }
+  }
+
   initPromise = new Promise((resolve) => {
     let obrasReady = false;
     let tareasReady = false;
@@ -167,8 +152,38 @@ export function setUserContext(user) {
     async function checkReady() {
       if (obrasReady && tareasReady && !isInitialized) {
         isInitialized = true;
+        saveLocalSnapshot();
         resolve();
         notify(false);
+
+        // Comprobar si es el primer acceso histórico de este usuario en Firestore
+        try {
+          const userDocRef = doc(firestore, 'users', currentUserId);
+          const userSnap = await getDoc(userDocRef);
+          if (!userSnap.exists()) {
+            // Primer acceso del usuario corporativo: registrar perfil
+            await setDoc(userDocRef, {
+              email: user.email || '',
+              displayName: user.displayName || '',
+              initialized: true,
+              fecha_creado: new Date().toISOString()
+            });
+
+            // Si es un usuario nuevo y no tiene obras privadas, sembrar las iniciales
+            if (obrasMap.size === 0) {
+              const batch = writeBatch(firestore);
+              for (const obra of DEFAULT_STARTER_OBRAS) {
+                batch.set(doc(firestore, 'users', currentUserId, 'obras', obra.id), obra);
+                obrasMap.set(obra.id, obra);
+              }
+              await batch.commit();
+              saveLocalSnapshot();
+              notify(false);
+            }
+          }
+        } catch (err) {
+          console.warn('Verificación de perfil de usuario en Firestore:', err?.message);
+        }
       }
     }
 
@@ -188,6 +203,7 @@ export function setUserContext(user) {
         }
       });
       obrasReady = true;
+      saveLocalSnapshot();
       checkReady();
       if (isInitialized) notify(false);
     }, (error) => {
@@ -218,6 +234,7 @@ export function setUserContext(user) {
         }
       });
       tareasReady = true;
+      saveLocalSnapshot();
       checkReady();
       if (isInitialized) notify(false);
     }, (error) => {
@@ -245,6 +262,18 @@ export const db = {
     }
     const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
 
+    // Query 0: SELECT COUNT(*) FROM tareas WHERE obra_id = ?
+    if (normalized.includes('count(*)')) {
+      const obraId = params && params[0] ? String(params[0]) : null;
+      let count = 0;
+      if (obraId) {
+        count = Array.from(tareasMap.values()).filter((t) => t.obra_id === obraId).length;
+      } else {
+        count = tareasMap.size;
+      }
+      return { columns: ['COUNT(*)'], rows: [[count]], rowCount: 1 };
+    }
+
     // Query 1: SELECT * FROM obras ORDER BY nombre ASC
     if (normalized.includes('from obras')) {
       const obrasList = Array.from(obrasMap.values()).sort((a, b) =>
@@ -259,7 +288,7 @@ export const db = {
       const tareasList = Array.from(tareasMap.values()).sort((a, b) => {
         const weekCompare = a.fecha_semana.localeCompare(b.fecha_semana);
         if (weekCompare !== 0) return weekCompare;
-        return a.fecha_creado.localeCompare(b.fecha_creado);
+        return (a.fecha_creado || '').localeCompare(b.fecha_creado || '');
       });
 
       const rows = tareasList.map((t) => {
@@ -316,40 +345,71 @@ export const db = {
         const obraDoc = {
           id: String(id),
           nombre: String(nombre),
-          activo: Number(activo) || 1
+          activo: activo !== undefined ? Number(activo) : 1
         };
-        await setDoc(doc(firestore, 'users', currentUserId, 'obras', String(id)), obraDoc);
+        await setDoc(doc(firestore, 'users', currentUserId, 'obras', String(id)), obraDoc, { merge: true });
         obrasMap.set(String(id), obraDoc);
+        saveLocalSnapshot();
         return { changes: 1 };
       }
 
-      // UPDATE obras SET nombre = ? WHERE id = ?
-      if (lower.startsWith('update obras set nombre = ? where id = ?')) {
-        const [nombre, id] = params;
-        await updateDoc(doc(firestore, 'users', currentUserId, 'obras', String(id)), { nombre: String(nombre) });
-        if (obrasMap.has(String(id))) {
-          obrasMap.get(String(id)).nombre = String(nombre);
+      // UPDATE obras SET ... WHERE id = ?
+      if (lower.startsWith('update obras set')) {
+        const setMatch = trimmed.match(/set\s+(.*?)\s+where\s+id\s*=\s*\?/i);
+        const id = String(params[params.length - 1]);
+        const existing = obrasMap.get(id) || {};
+        let nuevoNombre = existing.nombre || '';
+        let nuevoActivo = existing.activo !== undefined ? Number(existing.activo) : 1;
+        if (setMatch) {
+          const cols = setMatch[1].split(',').map((c) => c.split('=')[0].trim().toLowerCase());
+          cols.forEach((col, idx) => {
+            if (col === 'nombre') nuevoNombre = String(params[idx]);
+            if (col === 'activo') nuevoActivo = Number(params[idx]);
+          });
+        } else if (params.length === 2) {
+          nuevoNombre = String(params[0]);
         }
+        const obraDoc = {
+          id,
+          nombre: nuevoNombre,
+          activo: nuevoActivo
+        };
+        await setDoc(doc(firestore, 'users', currentUserId, 'obras', id), obraDoc, { merge: true });
+        obrasMap.set(id, obraDoc);
+        saveLocalSnapshot();
         return { changes: 1 };
       }
 
       // DELETE FROM tareas WHERE obra_id = ?
       if (lower.startsWith('delete from tareas where obra_id = ?')) {
         const [obraId] = params;
-        const q = query(
-          collection(firestore, 'users', currentUserId, 'tareas'),
-          where('obra_id', '==', String(obraId))
-        );
-        const snap = await getDocs(q);
-        if (snap.size > 0) {
+        const targetObraId = String(obraId);
+        const toDelete = Array.from(tareasMap.values()).filter((t) => t.obra_id === targetObraId);
+        if (toDelete.length > 0) {
           const batch = writeBatch(firestore);
-          snap.forEach((d) => {
-            batch.delete(d.ref);
-            tareasMap.delete(d.id);
+          toDelete.forEach((t) => {
+            batch.delete(doc(firestore, 'users', currentUserId, 'tareas', t.id));
+            tareasMap.delete(t.id);
           });
           await batch.commit();
         }
-        return { changes: snap.size };
+        try {
+          const q = query(
+            collection(firestore, 'users', currentUserId, 'tareas'),
+            where('obra_id', '==', targetObraId)
+          );
+          const snap = await getDocs(q);
+          if (snap.size > 0) {
+            const batch = writeBatch(firestore);
+            snap.forEach((d) => {
+              batch.delete(d.ref);
+              tareasMap.delete(d.id);
+            });
+            await batch.commit();
+          }
+        } catch (_) {}
+        saveLocalSnapshot();
+        return { changes: toDelete.length };
       }
 
       // DELETE FROM obras WHERE id = ?
@@ -357,6 +417,7 @@ export const db = {
         const [id] = params;
         await deleteDoc(doc(firestore, 'users', currentUserId, 'obras', String(id)));
         obrasMap.delete(String(id));
+        saveLocalSnapshot();
         return { changes: 1 };
       }
 
@@ -374,94 +435,41 @@ export const db = {
           notas: String(notas || ''),
           fecha_creado: String(fecha_creado || new Date().toISOString())
         };
-        await setDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), tareaDoc);
+        await setDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), tareaDoc, { merge: true });
         tareasMap.set(String(id), tareaDoc);
+        saveLocalSnapshot();
         return { changes: 1 };
       }
 
-      // UPDATE tareas SET obra_id = ?, dia_semana = ?, actividad = ?, gremio = ?, notas = ? WHERE id = ?
-      if (lower.startsWith('update tareas set obra_id = ?, dia_semana = ?, actividad = ?, gremio = ?, notas = ? where id = ?')) {
-        const [obra_id, dia_semana, actividad, gremio, notas, id] = params;
-        const updateData = {
-          obra_id: String(obra_id),
-          dia_semana: String(dia_semana),
-          actividad: String(actividad),
-          gremio: String(gremio),
-          notas: String(notas || '')
+      // UPDATE tareas SET ... WHERE id = ?
+      if (lower.startsWith('update tareas set')) {
+        const setMatch = trimmed.match(/set\s+(.*?)\s+where\s+id\s*=\s*\?/i);
+        const id = String(params[params.length - 1]);
+        const existing = tareasMap.get(id) || {};
+
+        const updateData = {};
+        if (setMatch) {
+          const cols = setMatch[1].split(',').map((c) => c.split('=')[0].trim().toLowerCase());
+          cols.forEach((col, idx) => {
+            updateData[col] = params[idx];
+          });
+        }
+
+        const tareaDoc = {
+          id,
+          obra_id: updateData.obra_id !== undefined ? String(updateData.obra_id) : String(existing.obra_id || ''),
+          fecha_semana: updateData.fecha_semana !== undefined ? String(updateData.fecha_semana) : String(existing.fecha_semana || ''),
+          dia_semana: updateData.dia_semana !== undefined ? String(updateData.dia_semana) : String(existing.dia_semana || 'Lunes'),
+          actividad: updateData.actividad !== undefined ? String(updateData.actividad) : String(existing.actividad || ''),
+          gremio: updateData.gremio !== undefined ? String(updateData.gremio) : String(existing.gremio || 'Otros'),
+          completada: updateData.completada !== undefined ? Number(updateData.completada) : (existing.completada !== undefined ? Number(existing.completada) : 0),
+          notas: updateData.notas !== undefined ? String(updateData.notas || '') : String(existing.notas || ''),
+          fecha_creado: String(existing.fecha_creado || new Date().toISOString())
         };
-        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
-        if (tareasMap.has(String(id))) {
-          Object.assign(tareasMap.get(String(id)), updateData);
-        }
-        return { changes: 1 };
-      }
 
-      // UPDATE tareas SET obra_id = ?, fecha_semana = ?, dia_semana = ?, notas = ? WHERE id = ?
-      if (lower.startsWith('update tareas set obra_id = ?, fecha_semana = ?, dia_semana = ?, notas = ? where id = ?')) {
-        const [obra_id, fecha_semana, dia_semana, notas, id] = params;
-        const updateData = {
-          obra_id: String(obra_id),
-          fecha_semana: String(fecha_semana),
-          dia_semana: String(dia_semana),
-          notas: String(notas || '')
-        };
-        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
-        if (tareasMap.has(String(id))) {
-          Object.assign(tareasMap.get(String(id)), updateData);
-        }
-        return { changes: 1 };
-      }
-
-      // UPDATE tareas SET fecha_semana = ?, dia_semana = ?, notas = ? WHERE id = ?
-      if (lower.startsWith('update tareas set fecha_semana = ?, dia_semana = ?, notas = ? where id = ?')) {
-        const [fecha_semana, dia_semana, notas, id] = params;
-        const updateData = {
-          fecha_semana: String(fecha_semana),
-          dia_semana: String(dia_semana),
-          notas: String(notas || '')
-        };
-        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
-        if (tareasMap.has(String(id))) {
-          Object.assign(tareasMap.get(String(id)), updateData);
-        }
-        return { changes: 1 };
-      }
-
-      // UPDATE tareas SET notas = ? WHERE id = ?
-      if (lower.startsWith('update tareas set notas = ? where id = ?')) {
-        const [notas, id] = params;
-        const updateData = {
-          notas: String(notas || '')
-        };
-        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
-        if (tareasMap.has(String(id))) {
-          Object.assign(tareasMap.get(String(id)), updateData);
-        }
-        return { changes: 1 };
-      }
-
-      // UPDATE tareas SET fecha_semana = ?, dia_semana = ? WHERE id = ?
-      if (lower.startsWith('update tareas set fecha_semana = ?, dia_semana = ? where id = ?')) {
-        const [fecha_semana, dia_semana, id] = params;
-        const updateData = {
-          fecha_semana: String(fecha_semana),
-          dia_semana: String(dia_semana)
-        };
-        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
-        if (tareasMap.has(String(id))) {
-          Object.assign(tareasMap.get(String(id)), updateData);
-        }
-        return { changes: 1 };
-      }
-
-      // UPDATE tareas SET completada = ? WHERE id = ?
-      if (lower.startsWith('update tareas set completada = ? where id = ?')) {
-        const [completada, id] = params;
-        const updateData = { completada: Number(completada) || 0 };
-        await updateDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), updateData);
-        if (tareasMap.has(String(id))) {
-          Object.assign(tareasMap.get(String(id)), updateData);
-        }
+        await setDoc(doc(firestore, 'users', currentUserId, 'tareas', id), tareaDoc, { merge: true });
+        tareasMap.set(id, tareaDoc);
+        saveLocalSnapshot();
         return { changes: 1 };
       }
 
@@ -470,6 +478,7 @@ export const db = {
         const [id] = params;
         await deleteDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)));
         tareasMap.delete(String(id));
+        saveLocalSnapshot();
         return { changes: 1 };
       }
 
