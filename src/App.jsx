@@ -4684,6 +4684,67 @@ return (
     return text;
   };
 
+  const handleSendViaGoogleWorkspace = async () => {
+    if (!emailRecipient.trim()) {
+      alert('Por favor, introduce una dirección de correo válida en el destinatario.');
+      return;
+    }
+
+    const bodyText = (emailMessage ? `${emailMessage}\n\n====================\n\n` : '') + generateEmailReportText(emailScope);
+    const subject = emailSubject || `[ENUE] Informe de Repasos - ${periodLabel}`;
+
+    // Copiamos al portapapeles automáticamente para máxima comodidad
+    try {
+      await navigator.clipboard.writeText(bodyText);
+      setEmailCopiedFeedback(true);
+      setTimeout(() => setEmailCopiedFeedback(false), 3500);
+    } catch (e) {
+      console.warn('No se pudo copiar automáticamente:', e);
+    }
+
+    setEmailSendStatus('sending');
+
+    // Registrar en Firestore
+    try {
+      if (currentUser?.uid) {
+        const userDocRef = doc(firestore, 'users', currentUser.uid);
+        await setDoc(userDocRef, {
+          ultimo_envio_informe: {
+            metodo: 'google_workspace',
+            remitente: currentUser.email || 'usuario@enue.es',
+            destinatario: emailRecipient.trim(),
+            asunto: subject,
+            alcance: emailScope,
+            fecha: new Date().toISOString()
+          }
+        }, { merge: true });
+      }
+    } catch (err) {
+      console.error('Error registrando envío en Firestore:', err);
+    }
+
+    // Cuenta corporativa Google Workspace (@enue.es)
+    const userAccount = (currentUser?.email && currentUser.email.endsWith('@enue.es'))
+      ? currentUser.email
+      : '';
+
+    // Truncado de seguridad para GET URL en navegadores
+    const maxUrlBodyLength = 1700;
+    let urlBody = bodyText;
+    if (urlBody.length > maxUrlBodyLength) {
+      urlBody = urlBody.substring(0, maxUrlBodyLength) + '\n\n[...Nota: El informe completo ha sido copiado automáticamente a tu portapapeles. Puedes pegarlo aquí con Ctrl+V...]';
+    }
+
+    const workspaceUrl = `https://mail.google.com/mail/?view=cm&fs=1` +
+      (userAccount ? `&authuser=${encodeURIComponent(userAccount)}` : '') +
+      `&to=${encodeURIComponent(emailRecipient.trim())}` +
+      `&su=${encodeURIComponent(subject)}` +
+      `&body=${encodeURIComponent(urlBody)}`;
+
+    window.open(workspaceUrl, '_blank');
+    setEmailSendStatus('sent');
+  };
+
   const handleSendViaMailto = () => {
     const bodyText = (emailMessage ? `${emailMessage}\n\n====================\n\n` : '') + generateEmailReportText(emailScope);
     const subject = emailSubject || `[ENUE] Informe de Repasos - ${periodLabel}`;
@@ -4703,6 +4764,8 @@ return (
         const userDocRef = doc(firestore, 'users', currentUser.uid);
         await setDoc(userDocRef, {
           ultimo_envio_informe: {
+            metodo: 'registro_directo',
+            remitente: currentUser.email || 'usuario@enue.es',
             destinatario: emailRecipient.trim(),
             asunto: emailSubject,
             alcance: emailScope,
@@ -5559,11 +5622,17 @@ return (
               {/* Cabecera del Modal de Email */}
               <div className="bg-slate-900 text-white p-4 px-6 flex justify-between items-center">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-2 bg-amber-500 text-slate-950 rounded-xl font-bold">
+                  <div className="p-2 bg-blue-600 text-white rounded-xl font-bold shadow-xs">
                     <Mail className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="font-extrabold text-base leading-tight">Enviar Informe por Correo Electrónico</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-extrabold text-base leading-tight">Enviar Informe por Correo Electrónico</h3>
+                      <span className="bg-blue-900/60 text-blue-200 border border-blue-500/40 px-2 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
+                        Google Workspace · enue.es
+                      </span>
+                    </div>
                     <p className="text-xs text-slate-400">ENUE Proyectos y Construcción S.L.</p>
                   </div>
                 </div>
@@ -5578,6 +5647,30 @@ return (
 
               {/* Formulario de Email */}
               <div className="p-6 overflow-y-auto space-y-4 text-xs">
+                {/* Banner de Identidad Google Workspace de la Empresa */}
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50/60 border border-blue-200 rounded-xl p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                        <path d="M22 6C22 4.9 21.1 4 20 4H4C2.9 4 2 4.9 2 6V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V6Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M22 6L12 13L2 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-[11px] font-extrabold text-blue-950">Google Workspace Corporativo</p>
+                        <span className="text-[9px] font-black uppercase tracking-wider bg-blue-200/70 text-blue-800 px-1.5 py-0.2 rounded">enue.es</span>
+                      </div>
+                      <p className="text-[11px] text-blue-800">
+                        Remitente: <span className="font-bold text-blue-950">{currentUser?.email || 'usuario@enue.es'}</span> {currentUser?.displayName ? `(${currentUser.displayName})` : ''}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="hidden sm:inline-block text-[10px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-md">
+                    ✓ Sesión activa
+                  </span>
+                </div>
+
                 {/* Selector de alcance de obras */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
@@ -5592,7 +5685,7 @@ return (
                         : (obras.find(o => o[0] === e.target.value)?.[1] || 'Obra');
                       setEmailSubject(`[ENUE] Informe de Repasos - ${name} (${periodLabel})`);
                     }}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="all">📍 Todas las obras agrupadas ({obrasGrouped.length} obras)</option>
                     {obrasGrouped.map(g => (
@@ -5613,10 +5706,10 @@ return (
                     value={emailRecipient}
                     onChange={(e) => setEmailRecipient(e.target.value)}
                     placeholder="ej. direccion@enue.es, cliente@empresa.com"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                    <span className="text-[10px] text-slate-400 font-bold uppercase">Sugerencias:</span>
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Sugerencias corporativas:</span>
                     {currentUser?.email && (
                       <button
                         type="button"
@@ -5640,6 +5733,20 @@ return (
                     >
                       tecnico@enue.es
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setEmailRecipient('administracion@enue.es')}
+                      className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                    >
+                      administracion@enue.es
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEmailRecipient('obras@enue.es')}
+                      className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                    >
+                      obras@enue.es
+                    </button>
                   </div>
                 </div>
 
@@ -5652,7 +5759,7 @@ return (
                     type="text"
                     value={emailSubject}
                     onChange={(e) => setEmailSubject(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
@@ -5666,7 +5773,7 @@ return (
                     onChange={(e) => setEmailMessage(e.target.value)}
                     rows={2}
                     placeholder="Instrucciones o notas para el receptor del informe..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                   />
                 </div>
 
@@ -5674,12 +5781,12 @@ return (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                   <div className="flex justify-between items-center mb-1.5">
                     <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                      Previsualización del Resumen
+                      Previsualización del Resumen del Informe
                     </span>
                     <button
                       type="button"
                       onClick={handleCopyReportText}
-                      className="text-[10px] font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1 cursor-pointer"
+                      className="text-[10px] font-bold text-blue-700 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
                     >
                       <Copy className="w-3 h-3" />
                       <span>{emailCopiedFeedback ? '✓ ¡Copiado!' : 'Copiar Texto'}</span>
@@ -5692,13 +5799,17 @@ return (
 
                 {/* Confirmación visual */}
                 {emailSendStatus === 'sent' && (
-                  <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-900 flex items-center gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                    <div>
-                      <p className="font-bold text-xs">¡Informe preparado y registrado con éxito!</p>
-                      <p className="text-[11px] text-emerald-700">
-                        Se ha preparado para enviar a <span className="font-semibold">{emailRecipient || 'destinatario'}</span>.
-                      </p>
+                  <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-950 space-y-1">
+                    <div className="flex items-center gap-2 font-black text-xs text-emerald-800">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>¡Redactor de Google Workspace (Gmail) preparado y abierto!</span>
+                    </div>
+                    <p className="text-[11px] text-emerald-800">
+                      Se ha abierto una nueva pestaña con tu cuenta corporativa <span className="font-bold">{currentUser?.email || 'enue.es'}</span> para enviar a <span className="font-bold">{emailRecipient || 'destinatario'}</span>.
+                    </p>
+                    <div className="pt-1 text-[10px] text-emerald-700 flex items-center gap-1.5 font-medium">
+                      <Copy className="w-3 h-3 text-emerald-600" />
+                      <span>El texto completo del informe también ha sido copiado a tu portapapeles (Ctrl+V si deseas pegarlo con formato).</span>
                     </div>
                   </div>
                 )}
@@ -5706,23 +5817,44 @@ return (
 
               {/* Botones de acción del Modal de Email */}
               <div className="bg-slate-50 p-4 border-t border-slate-100 flex flex-col sm:flex-row gap-2">
+                {/* Botón Principal: Google Workspace Gmail */}
+                <button
+                  type="button"
+                  onClick={handleSendViaGoogleWorkspace}
+                  disabled={emailSendStatus === 'sending'}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-black py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-blue-600/20 transition-all border-none disabled:opacity-50"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                    <path d="M22 6C22 4.9 21.1 4 20 4H4C2.9 4 2 4.9 2 6V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V6Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M22 6L12 13L2 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <span>{emailSendStatus === 'sending' ? 'Abriendo Google Workspace...' : 'Enviar con Google Workspace (Gmail)'}</span>
+                  <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+                </button>
+
+                {/* Botón Secundario: Gestor Local */}
                 <button
                   type="button"
                   onClick={handleSendViaMailto}
-                  className="flex-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-amber-500/10 transition-all border-none"
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all border border-slate-200"
+                  title="Abrir con el cliente de correo predeterminado del sistema (Outlook / Thunderbird)"
                 >
-                  <ExternalLink className="w-4 h-4" />
-                  <span>Abrir en Gestor de Correo</span>
+                  <Mail className="w-3.5 h-3.5 text-slate-600" />
+                  <span>Gestor Local</span>
                 </button>
+
+                {/* Botón Secundario: Copiar Texto */}
                 <button
                   type="button"
-                  onClick={handleDirectCorporateSend}
-                  disabled={emailSendStatus === 'sending'}
-                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all border-none disabled:opacity-50"
+                  onClick={handleCopyReportText}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all border border-slate-200"
+                  title="Copiar texto del informe al portapapeles"
                 >
-                  <Send className="w-4 h-4 text-amber-400" />
-                  <span>{emailSendStatus === 'sending' ? 'Enviando...' : 'Registrar Envío Directo'}</span>
+                  <Copy className="w-3.5 h-3.5 text-slate-600" />
+                  <span>{emailCopiedFeedback ? '¡Copiado!' : 'Copiar'}</span>
                 </button>
+
+                {/* Cerrar */}
                 <button
                   type="button"
                   onClick={() => setIsEmailModalOpen(false)}
