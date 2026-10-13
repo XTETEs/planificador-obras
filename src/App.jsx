@@ -4662,54 +4662,37 @@ return (
       .sort((a, b) => String(a.obra_nombre || '').localeCompare(String(b.obra_nombre || ''), 'es'));
   })();
 
-  // Generador de texto para el correo
+  // Generador de texto para el correo (Notificación formal indicando que se adjunta el informe en PDF)
   const generateEmailReportText = (scopeObraId = 'all') => {
     const targetGroups = scopeObraId === 'all'
       ? obrasGrouped
       : obrasGrouped.filter(g => g.obra_id === scopeObraId);
 
-    const obraTitle = scopeObraId === 'all' ? 'TODAS LAS OBRAS ACTIVAS' : (targetGroups[0]?.obra_nombre || 'OBRA SELECCIONADA');
-    
-    let text = `ENUE PROYECTOS Y CONSTRUCCIÓN S.L.\n`;
-    text += `INFORME DE REPASOS Y CONTROL DE EJECUCIÓN\n`;
-    text += `Ámbito: ${obraTitle}\n`;
-    text += `Período: ${periodLabel}\n`;
-    text += `Fecha de Emisión: ${new Date().toLocaleDateString('es-ES')}\n`;
-    text += `Efectividad Global: ${compliancePct}% (${completedInPeriod} repasos ejecutados de ${totalTasksInPeriod} programados)\n`;
-    text += `--------------------------------------------------\n\n`;
+    const obraTitle = scopeObraId === 'all'
+      ? 'Todas las obras activas'
+      : (targetGroups[0]?.obra_nombre || 'Obra seleccionada');
 
-    targetGroups.forEach(group => {
-      text += `==================================================\n`;
-      text += `OBRA: ${group.obra_nombre.toUpperCase()}\n`;
-      text += `Repasos ejecutados: ${group.completedItems.length} | Incidencias/Traslados: ${group.incidentItems.length}\n`;
-      text += `==================================================\n\n`;
+    const totalComp = targetGroups.reduce((acc, g) => acc + g.completedItems.length, 0);
+    const totalInc = targetGroups.reduce((acc, g) => acc + g.incidentItems.length, 0);
+    const totalProg = targetGroups.reduce((acc, g) => acc + g.completedItems.length + g.incidentItems.length + (g.pendingItems?.length || 0), 0);
+    const effPct = totalProg > 0 ? Math.round((totalComp / totalProg) * 100) : 100;
 
-      if (group.completedItems.length > 0 && (reportViewFilter === 'all' || reportViewFilter === 'ejecutadas')) {
-        text += `[✓ ACTIVIDADES Y REPASOS EJECUTADOS SATISFACTORIAMENTE]:\n`;
-        group.completedItems.forEach((item, idx) => {
-          const histLabel = item.es_repaso_subsanado ? `Subsanado tras ${item.total_aplazamientos} repaso(s)` : 'A término';
-          text += ` ${idx + 1}. [${item.gremio}] ${item.actividad}\n`;
-          text += `    Fecha Ejecución: ${item.dia_semana || ''} (${item.fecha_ejecucion})\n`;
-          text += `    Historial: ${histLabel}\n`;
-          if (item.notas) text += `    Observaciones: "${item.notas}"\n`;
-          text += `    Resultado: ✓ EJECUTADO\n\n`;
-        });
-      }
+    const senderName = currentUser?.displayName || 'Dirección Técnica';
 
-      if (group.incidentItems.length > 0 && (reportViewFilter === 'all' || reportViewFilter === 'no_ejecutadas')) {
-        text += `[⏳ INCIDENCIAS Y TRASLADOS DE FECHA]:\n`;
-        group.incidentItems.forEach((item, idx) => {
-          text += ` ${idx + 1}. [${item.gremio}] ${item.actividad}\n`;
-          text += `    Fecha Prevista: ${item.fecha_anterior} -> Trasladada a: ${item.fecha_nueva}\n`;
-          text += `    Causa/Tags: #${(item.tags || []).join(' #')}\n`;
-          if (item.detalle) text += `    Detalle: "${item.detalle}"\n`;
-          text += `    Estado: ${item.completada ? '✓ Hecha posteriormente' : '⏳ Pendiente'}\n\n`;
-        });
-      }
-    });
-
-    text += `--------------------------------------------------\n`;
-    text += `Generado por Planificador Semanal ENUE - ${new Date().toLocaleString('es-ES')}\n`;
+    let text = `Estimados señores,\n\n`;
+    text += `Adjunto a este correo les remitimos el Informe Oficial de Repasos y Control de Ejecución (en formato PDF) correspondiente a:\n\n`;
+    text += `• Obra / Ámbito: ${obraTitle}\n`;
+    text += `• Período: ${periodLabel}\n`;
+    text += `• Fecha de Emisión: ${new Date().toLocaleDateString('es-ES')}\n\n`;
+    text += `En el documento PDF adjunto encontrarán el desglose detallado de los trabajos realizados satisfactoriamente, así como de las actividades no ejecutadas o aplazadas con sus causas y justificación técnica:\n\n`;
+    text += `Resumen de Ejecución:\n`;
+    text += `  ✓ Repasos ejecutados con éxito: ${totalComp}\n`;
+    text += `  ⏳ No ejecutadas / traslados de fecha: ${totalInc}\n`;
+    text += `  📊 Efectividad global alcanzada: ${effPct}% (${totalComp} de ${totalProg} programados)\n\n`;
+    text += `Quedamos a su entera disposición para cualquier aclaración o consulta sobre los trabajos del informe adjunto.\n\n`;
+    text += `Atentamente,\n`;
+    text += `${senderName}\n`;
+    text += `ENUE PROYECTOS Y CONSTRUCCIÓN S.L.\n`;
     return text;
   };
 
@@ -4719,8 +4702,8 @@ return (
       return;
     }
 
-    const bodyText = (emailMessage ? `${emailMessage}\n\n====================\n\n` : '') + generateEmailReportText(emailScope);
-    const subject = emailSubject || `[ENUE] Informe de Repasos - ${periodLabel}`;
+    const bodyText = (emailMessage ? `${emailMessage}\n\n==================================================\n\n` : '') + generateEmailReportText(emailScope);
+    const subject = emailSubject || `[ENUE] Informe de Repasos y Ejecución - ${periodLabel}`;
 
     // Copiamos al portapapeles automáticamente para máxima comodidad
     try {
@@ -5749,7 +5732,7 @@ return (
                       const name = e.target.value === 'all'
                         ? 'Todas las obras activas'
                         : (obras.find(o => o[0] === e.target.value)?.[1] || 'Obra');
-                      setEmailSubject(`[ENUE] Informe de Repasos - ${name} (${periodLabel})`);
+                      setEmailSubject(`[ENUE] Informe de Repasos y Ejecución - ${name} (${periodLabel})`);
                     }}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
@@ -5760,6 +5743,33 @@ return (
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Tarjeta Destacada: Informe en Formato PDF */}
+                <div className="bg-amber-50/80 border border-amber-300 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                  <div className="flex items-start gap-2.5">
+                    <div className="p-2 bg-amber-500 text-slate-950 rounded-lg shrink-0 mt-0.5 shadow-xs">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="font-extrabold text-xs text-slate-900 flex items-center gap-1.5">
+                        <span>Documento Oficial Adjunto (PDF)</span>
+                        <span className="text-[9px] bg-amber-200 text-amber-900 font-black px-1.5 py-0.2 rounded uppercase">Obligatorio</span>
+                      </p>
+                      <p className="text-[11px] text-slate-600 mt-0.5 leading-snug">
+                        El informe formal con todas las actividades, repasos, incidencias y firmas se envía como archivo PDF adjunto al correo.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0 transition-colors shadow-sm"
+                    title="Guarda o descarga el informe en PDF con formato DIN-A4 oficial"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Guardar / Descargar PDF</span>
+                  </button>
                 </div>
 
                 {/* Correo Destinatario */}
@@ -5832,13 +5842,13 @@ return (
                 {/* Mensaje Adicional */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                    Mensaje / Observaciones Adicionales (Opcional)
+                    Mensaje Personalizado Adicional (Opcional)
                   </label>
                   <textarea
                     value={emailMessage}
                     onChange={(e) => setEmailMessage(e.target.value)}
                     rows={2}
-                    placeholder="Instrucciones o notas para el receptor del informe..."
+                    placeholder="Instrucciones o notas introductorias antes del texto de remisión..."
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                   />
                 </div>
@@ -5847,7 +5857,7 @@ return (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                   <div className="flex justify-between items-center mb-1.5">
                     <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                      Previsualización del Resumen del Informe
+                      Cuerpo del Mensaje (Remisión Formal del Informe en PDF)
                     </span>
                     <button
                       type="button"
@@ -5859,13 +5869,13 @@ return (
                     </button>
                   </div>
                   <pre className="text-[10px] font-mono bg-white p-2.5 rounded-lg border border-slate-200 text-slate-700 max-h-36 overflow-y-auto whitespace-pre-wrap leading-relaxed">
-                    {generateEmailReportText(emailScope)}
+                    {(emailMessage ? `${emailMessage}\n\n==================================================\n\n` : '') + generateEmailReportText(emailScope)}
                   </pre>
                 </div>
 
                 {/* Confirmación visual */}
                 {emailSendStatus === 'sent' && (
-                  <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-950 space-y-1">
+                  <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-950 space-y-2">
                     <div className="flex items-center gap-2 font-black text-xs text-emerald-800">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                       <span>¡Redactor de Google Workspace (Gmail) preparado y abierto!</span>
@@ -5873,9 +5883,14 @@ return (
                     <p className="text-[11px] text-emerald-800">
                       Se ha abierto una nueva pestaña con tu cuenta corporativa <span className="font-bold">{currentUser?.email || 'enue.es'}</span> para enviar a <span className="font-bold">{emailRecipient || 'destinatario'}</span>.
                     </p>
-                    <div className="pt-1 text-[10px] text-emerald-700 flex items-center gap-1.5 font-medium">
-                      <Copy className="w-3 h-3 text-emerald-600" />
-                      <span>El texto completo del informe también ha sido copiado a tu portapapeles (Ctrl+V si deseas pegarlo con formato).</span>
+                    <div className="p-2.5 bg-amber-100/80 border border-amber-300 rounded-lg text-[11px] text-amber-950 flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold text-xs">📎 Adjuntar el archivo PDF en Gmail:</p>
+                        <p className="text-[10px] text-amber-900 mt-0.5">
+                          En la ventana de Gmail que se acaba de abrir, pulsa el icono del clip y adjunta el informe PDF guardado antes de hacer clic en «Enviar».
+                        </p>
+                      </div>
                     </div>
                   </div>
                 )}
