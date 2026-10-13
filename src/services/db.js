@@ -80,13 +80,6 @@ function saveLocalSnapshot() {
   } catch (e) {}
 }
 
-const DEFAULT_STARTER_OBRAS = [
-  { id: '1', nombre: 'Residencial Las Palmeras (Fase 2)', activo: 1 },
-  { id: '2', nombre: 'Reforma Integral Oficinas Centrales', activo: 1 },
-  { id: '3', nombre: 'Vivienda Unifamiliar La Cañada', activo: 1 },
-  { id: '4', nombre: 'Edificio Residencial Gran Vía', activo: 1 }
-];
-
 /**
  * Conecta la base de datos a la sesión del usuario corporativo autenticado.
  * Aísla 100% las obras y tareas bajo /users/{uid}/obras y /users/{uid}/tareas
@@ -168,18 +161,6 @@ export function setUserContext(user) {
               initialized: true,
               fecha_creado: new Date().toISOString()
             });
-
-            // Si es un usuario nuevo y no tiene obras privadas, sembrar las iniciales
-            if (obrasMap.size === 0) {
-              const batch = writeBatch(firestore);
-              for (const obra of DEFAULT_STARTER_OBRAS) {
-                batch.set(doc(firestore, 'users', currentUserId, 'obras', obra.id), obra);
-                obrasMap.set(obra.id, obra);
-              }
-              await batch.commit();
-              saveLocalSnapshot();
-              notify(false);
-            }
           }
         } catch (err) {
           console.warn('Verificación de perfil de usuario en Firestore:', err?.message);

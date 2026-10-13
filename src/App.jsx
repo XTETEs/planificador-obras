@@ -826,7 +826,17 @@ const handleDeleteGremio = async (id, nombre) => {
 };
 // Add single manual task
 const handleAddManualTask = async (e) => {
-e.preventDefault();
+if (e) e.preventDefault();
+if (obras.length === 0) {
+  setError('Debes registrar al menos una obra antes de crear actividades.');
+  setIsManageObrasModalOpen(true);
+  return;
+}
+const assignedObraId = manualTask.obra_id || (obras[0] ? obras[0][0] : '');
+if (!assignedObraId) {
+  setError('Selecciona o registra la obra a la que pertenece esta actividad.');
+  return;
+}
 if (!manualTask.actividad.trim()) return;
 const taskId = 't_' + Date.now();
 const nowIso = new Date().toISOString();
@@ -838,7 +848,7 @@ await db.exec(
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 [
 taskId,
-manualTask.obra_id,
+assignedObraId,
 targetWeek,
 manualTask.dia_semana,
 manualTask.actividad.trim(),
@@ -849,10 +859,10 @@ nowIso
 ]
 );
 // Optimistic UI update
-const matchedObra = obras.find(o => o[0] === manualTask.obra_id);
+const matchedObra = obras.find(o => o[0] === assignedObraId);
 const newLocalTask = {
 id: taskId,
-obra_id: manualTask.obra_id,
+obra_id: assignedObraId,
 fecha_semana: targetWeek,
 dia_semana: manualTask.dia_semana,
 actividad: manualTask.actividad.trim(),
@@ -1617,13 +1627,18 @@ setIsParsingSpeech(true);
 setError(null);
 try {
 const client = AiKit.createClient();
-const obrasTextList = obras.map(o => `ID "${o[0]}": "${o[1]}"`).join('\n');
+const obrasTextList = obras.length > 0
+  ? obras.map(o => `ID "${o[0]}": "${o[1]}"`).join('\n')
+  : 'Sin obras registradas todavía';
+const defaultObraDirective = obras.length > 0
+  ? `Si no se puede deducir la obra, usa por defecto el ID "${obras[0][0]}" (${obras[0][1]}).`
+  : 'Usa una obra general o vacía si no existe.';
 const systemPrompt = `
 Eres un experto planificador y estructurador de agendas de obra en España.
 Tu misión es analizar una transcripción de voz (dictado) de obra y extraer actividades y organizarlas por días de la semana y obras.
-Estas son las obras cargadas actualmente en el sistema (usa exactamente sus IDs):
+Estas son las obras registradas del usuario actualmente en el sistema (usa exactamente sus IDs):
 ${obrasTextList}
-Si el dictado menciona o alude fuertemente a una obra, por favor emparéjala con su ID. Si no se puede deducir la obra, usa la obra '1' por defecto (Edificio Salamanca 50).
+${defaultObraDirective}
 Organiza cada tarea según los días laborables de la semana en España de Lunes a Viernes: "Lunes", "Martes", "Miércoles", "Jueves", "Viernes".
 Intenta clasificar el gremio / subcontratista o gremio que ejecuta de entre estos valores predefinidos si es claro:
 - Albañilería
@@ -1677,18 +1692,26 @@ setIsParsingSpeech(false);
 // Save all preview/parsed tasks to SQLite
 const saveParsedTasks = async () => {
 if (parsedTasks.length === 0) return;
+if (obras.length === 0) {
+  setError('Debes registrar al menos una obra antes de importar tareas del dictado.');
+  setIsDictatingModalOpen(false);
+  setIsManageObrasModalOpen(true);
+  return;
+}
+const defaultObraId = obras[0][0];
 try {
 const nowIso = new Date().toISOString();
 // Insert each task
 const pendingQueries = parsedTasks.map((t, idx) => {
 const taskId = 't_' + Date.now() + '_' + idx;
+const assignedObraId = (t.obra_id && obras.some(o => o[0] === t.obra_id)) ? t.obra_id : defaultObraId;
 return db.exec(
 `INSERT OR REPLACE INTO tareas
 (id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 [
 taskId,
-t.obra_id || '1',
+assignedObraId,
 currentWeekMonday,
 t.dia_semana || 'Lunes',
 t.actividad || 'Falta definición',
@@ -1925,6 +1948,30 @@ className="bg-slate-900 hover:bg-slate-800 text-white hover:cursor-pointer font-
 {/* VISTA SEMANAL */}
 {activeView === 'semanal' && (
 <div>
+{/* Banner de bienvenida y registro de primera obra si no tiene obras registradas */}
+{obras.length === 0 && (
+  <div className="mb-6 p-6 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border-2 border-dashed border-amber-300 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
+    <div className="flex items-center gap-3.5">
+      <div className="w-12 h-12 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 shadow-md">
+        <Building className="w-6 h-6" />
+      </div>
+      <div>
+        <h3 className="font-extrabold text-slate-900 text-base">Registra tus obras para comenzar</h3>
+        <p className="text-xs text-slate-600 mt-0.5">
+          Tu cuenta corporativa está activa. Cada usuario gestiona de forma aislada y privada exclusivamente sus propias obras registradas.
+        </p>
+      </div>
+    </div>
+    <button
+      type="button"
+      onClick={() => setIsManageObrasModalOpen(true)}
+      className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold px-5 py-2.5 rounded-xl text-xs inline-flex items-center gap-2 shadow-xs cursor-pointer shrink-0 transition-all border-none"
+    >
+      <Plus className="w-4 h-4" /> Registrar Primera Obra
+    </button>
+  </div>
+)}
+
 {/* Control Bar & Progress */}
 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8">
 {/* Selector de Obra y Semana */}
@@ -3129,14 +3176,27 @@ className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
     <Plus className="w-3 h-3" /> Crear / Gestionar Obras
   </button>
 </div>
-<select
-value={manualTask.obra_id}
-onChange={(e) => setManualTask(prev => ({ ...prev, obra_id: e.target.value }))}
-className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-required
->
-{obras.map(o => <option key={o[0]} value={o[0]}>{o[1]}</option>)}
-</select>
+{obras.length === 0 ? (
+  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 flex items-center justify-between">
+    <span>⚠️ No tienes obras registradas.</span>
+    <button
+      type="button"
+      onClick={() => { setIsNewTaskModalOpen(false); setIsManageObrasModalOpen(true); }}
+      className="font-bold underline text-amber-800 hover:text-amber-950 cursor-pointer border-none bg-transparent"
+    >
+      + Registrar Obra
+    </button>
+  </div>
+) : (
+  <select
+    value={manualTask.obra_id || (obras[0] ? obras[0][0] : '')}
+    onChange={(e) => setManualTask(prev => ({ ...prev, obra_id: e.target.value }))}
+    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+    required
+  >
+    {obras.map(o => <option key={o[0]} value={o[0]}>{o[1]}</option>)}
+  </select>
+)}
 </div>
 <div>
 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Descripción de Actividad</label>
