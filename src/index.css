@@ -19,6 +19,22 @@
   z-index: 40;
 }
 
+button, a, select, input, textarea {
+  touch-action: manipulation;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
 @media print {
   @page {
     size: A4 portrait;
