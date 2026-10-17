@@ -1,0 +1,807 @@
+{
+  "exportedAt": "2026-10-17T17:48:55.298Z",
+  "collections": {
+    "gremios": [],
+    "root_obras": [],
+    "root_tareas": [],
+    "users": {
+      "u_jtejuelo_enue_es": {
+        "profile": {
+          "fecha_creado": "2026-10-13T17:45:12.220Z",
+          "email": "jtejuelo@enue.es",
+          "displayName": "Ximo",
+          "ultimo_envio_informe": {
+            "alcance": "obra_sim_4",
+            "fecha": "2026-10-13T19:40:27.850Z",
+            "remitente": "jtejuelo@enue.es",
+            "metodo": "google_workspace",
+            "asunto": "[ENUE] Informe de Repasos - Complejo Empresarial Innova Hub (Parque Tecnológico) (Mes de Octubre 2026)",
+            "destinatario": "jtejuelo@enue.es"
+          },
+          "initialized": true
+        },
+        "obras": [
+          {
+            "id": "5",
+            "activo": 1,
+            "nombre": "Salamanca 50"
+          },
+          {
+            "id": "6",
+            "activo": 1,
+            "nombre": "Almirante 32"
+          },
+          {
+            "id": "7",
+            "activo": 1,
+            "nombre": "Barraca 167"
+          },
+          {
+            "id": "o_1786512112062",
+            "activo": 1,
+            "nombre": "Vilarrasa"
+          },
+          {
+            "id": "obra_sim_1",
+            "activo": 1,
+            "nombre": "Residencial Infinity Suites (Poblats Marítims)"
+          },
+          {
+            "id": "obra_sim_2",
+            "nombre": "Reforma Integral Ático Gran Vía Marqués del Turia",
+            "activo": 1
+          },
+          {
+            "id": "obra_sim_3",
+            "activo": 1,
+            "nombre": "Villa Unifamiliar Los Olivos - El Vedat"
+          },
+          {
+            "id": "obra_sim_4",
+            "nombre": "Complejo Empresarial Innova Hub (Parque Tecnológico)",
+            "activo": 1
+          }
+        ],
+        "tareas": [
+          {
+            "id": "t_1786512160713",
+            "obra_id": "7",
+            "dia_semana": "Lunes",
+            "actividad": "Remates finales pladur y encintados",
+            "completada": 0,
+            "notas": "Revisar todos los rodapies!!!",
+            "fecha_creado": "2026-08-12T05:22:40.713Z",
+            "gremio": "Pladur / Yeso",
+            "fecha_semana": "2026-08-24"
+          },
+          {
+            "id": "t_1786512232247",
+            "completada": 0,
+            "actividad": "Vaciado y limpieza total obra incluido garaje",
+            "fecha_creado": "2026-08-12T05:23:52.247Z",
+            "obra_id": "7",
+            "notas": "",
+            "gremio": "Albañilería",
+            "dia_semana": "Lunes",
+            "fecha_semana": "2026-08-24"
+          },
+          {
+            "id": "t_1786512285016",
+            "actividad": "Pedir pavimento de barro Tendezzia",
+            "obra_id": "7",
+            "completada": 0,
+            "notas": "Está en el almacen de tendenzzia",
+            "gremio": "Albañilería",
+            "fecha_semana": "2026-08-24",
+            "dia_semana": "Lunes",
+            "fecha_creado": "2026-08-12T05:24:45.016Z"
+          },
+          {
+            "id": "t_1786512304411",
+            "actividad": "Colocacion barro en balcones",
+            "gremio": "Albañilería",
+            "notas": "",
+            "dia_semana": "Martes",
+            "fecha_semana": "2026-08-24",
+            "completada": 0,
+            "obra_id": "7",
+            "fecha_creado": "2026-08-12T05:25:04.411Z"
+          },
+          {
+            "id": "t_1786512404483",
+            "fecha_semana": "2026-09-07",
+            "actividad": "Avisar carpintero para interiores de armarios y medir cabeceros camas y muebles de baños",
+            "completada": 1,
+            "fecha_creado": "2026-08-12T05:26:44.483Z",
+            "gremio": "Carpintería",
+            "notas": "",
+            "obra_id": "7",
+            "dia_semana": "Lunes"
+          },
+          {
+            "id": "t_1786512796689_6wusl4",
+            "dia_semana": "Miércoles",
+            "fecha_semana": "2026-08-24",
+            "actividad": "Colocacion barro en patio",
+            "fecha_creado": "2026-08-12T05:33:16.689Z",
+            "notas": "",
+            "gremio": "Albañilería",
+            "obra_id": "7",
+            "completada": 0
+          },
+          {
+            "id": "t_1786513037938",
+            "fecha_semana": "2026-08-31",
+            "dia_semana": "Lunes",
+            "obra_id": "7",
+            "fecha_creado": "2026-08-12T05:37:17.938Z",
+            "gremio": "Otros",
+            "notas": "",
+            "actividad": "Revisar Templaval puertas de baños",
+            "completada": 0
+          },
+          {
+            "id": "t_1786513059658",
+            "notas": "",
+            "dia_semana": "Lunes",
+            "gremio": "Otros",
+            "completada": 0,
+            "fecha_semana": "2026-08-31",
+            "obra_id": "7",
+            "fecha_creado": "2026-08-12T05:37:39.658Z",
+            "actividad": "Revisar techos tensados precios"
+          },
+          {
+            "id": "t_1786618111765",
+            "fecha_creado": "2026-08-13T10:48:31.765Z",
+            "dia_semana": "Martes",
+            "gremio": "Carpintería",
+            "actividad": "Medicion armarios y libreria del salon",
+            "fecha_semana": "2026-08-24",
+            "notas": "JUAN ESTEBAN",
+            "completada": 0,
+            "obra_id": "5"
+          },
+          {
+            "id": "t_1786618132716",
+            "dia_semana": "Martes",
+            "gremio": "Carpintería",
+            "notas": "LEON",
+            "actividad": "Medicion puertas paso",
+            "fecha_semana": "2026-08-24",
+            "fecha_creado": "2026-08-13T10:48:52.716Z",
+            "obra_id": "5",
+            "completada": 0
+          },
+          {
+            "id": "t_1786618156373",
+            "notas": "",
+            "fecha_semana": "2026-08-24",
+            "dia_semana": "Lunes",
+            "actividad": "Replanteo baños mármol",
+            "fecha_creado": "2026-08-13T10:49:16.373Z",
+            "obra_id": "5",
+            "completada": 0,
+            "gremio": "Albañilería"
+          },
+          {
+            "id": "t_1786618227193",
+            "actividad": "Continuar con la colocacion de focos en bovedilla",
+            "notas": "Maicol y Miguel",
+            "gremio": "Albañilería",
+            "obra_id": "5",
+            "dia_semana": "Lunes",
+            "fecha_semana": "2026-08-24",
+            "completada": 0,
+            "fecha_creado": "2026-08-13T10:50:27.193Z"
+          },
+          {
+            "id": "t_1786618652558",
+            "actividad": "Colocacion mármol baños comenzar por baño de la ducha",
+            "notas": "Habrá que modificar la altura de la bañera para que coincida con la baldosa de 40x60 segun plano detalle. Ahora esta a 51 cm de altura.",
+            "dia_semana": "Martes",
+            "obra_id": "5",
+            "completada": 0,
+            "fecha_creado": "2026-08-13T10:57:32.558Z",
+            "fecha_semana": "2026-08-24",
+            "gremio": "Albañilería"
+          },
+          {
+            "id": "t_1786618708233",
+            "obra_id": "5",
+            "completada": 0,
+            "notas": "Presupuesto en carpeta de industriales",
+            "actividad": "Hablar con Carlos de Tarimas del mundo para organizar instalacion tarima",
+            "fecha_creado": "2026-08-13T10:58:28.233Z",
+            "fecha_semana": "2026-08-24",
+            "gremio": "Carpintería",
+            "dia_semana": "Miércoles"
+          },
+          {
+            "id": "t_1786619368482",
+            "fecha_semana": "2026-08-24",
+            "actividad": "Vaciar trastos vivienda",
+            "obra_id": "5",
+            "fecha_creado": "2026-08-13T11:09:28.482Z",
+            "dia_semana": "Miércoles",
+            "gremio": "Albañilería",
+            "completada": 0,
+            "notas": ""
+          },
+          {
+            "id": "t_1786619463475",
+            "fecha_creado": "2026-08-13T11:11:03.475Z",
+            "obra_id": "6",
+            "fecha_semana": "2026-08-24",
+            "dia_semana": "Lunes",
+            "actividad": "Buscar y comprar panel sandwich en Leroy Merlin para techo exterior",
+            "completada": 0,
+            "notas": "Angel",
+            "gremio": "Albañilería"
+          },
+          {
+            "id": "t_1786619494051",
+            "actividad": "Enlucido fachada exterior terraza",
+            "fecha_semana": "2026-08-24",
+            "dia_semana": "Lunes",
+            "fecha_creado": "2026-08-13T11:11:34.051Z",
+            "obra_id": "6",
+            "gremio": "Albañilería",
+            "notas": "",
+            "completada": 0
+          },
+          {
+            "id": "t_1786619517157",
+            "completada": 0,
+            "obra_id": "6",
+            "actividad": "Preparar los 2 platos de ducha de obra",
+            "fecha_semana": "2026-08-24",
+            "gremio": "Albañilería",
+            "dia_semana": "Martes",
+            "notas": "En PB escalon de 10 cm",
+            "fecha_creado": "2026-08-13T11:11:57.157Z"
+          },
+          {
+            "id": "t_1786619569106",
+            "dia_semana": "Martes",
+            "gremio": "Albañilería",
+            "obra_id": "6",
+            "notas": "",
+            "actividad": "Avisar a electricista continuar con tubo en P1",
+            "fecha_creado": "2026-08-13T11:12:49.106Z",
+            "fecha_semana": "2026-08-31",
+            "completada": 1
+          },
+          {
+            "id": "t_1786619630811",
+            "dia_semana": "Lunes",
+            "notas": "",
+            "obra_id": "6",
+            "gremio": "Albañilería",
+            "actividad": "Recordar a Mahm que debe comenzar con la libreria",
+            "fecha_creado": "2026-08-13T11:13:50.811Z",
+            "completada": 0,
+            "fecha_semana": "2026-08-31"
+          },
+          {
+            "id": "t_1786619694136",
+            "notas": "",
+            "dia_semana": "Lunes",
+            "gremio": "Carpintería",
+            "completada": 0,
+            "fecha_creado": "2026-08-13T11:14:54.136Z",
+            "obra_id": "6",
+            "actividad": "Pedir ventana de RALO baño P1",
+            "fecha_semana": "2026-08-31"
+          },
+          {
+            "id": "t_1786619760656",
+            "obra_id": "7",
+            "fecha_creado": "2026-08-13T11:16:00.656Z",
+            "fecha_semana": "2026-08-31",
+            "dia_semana": "Lunes",
+            "actividad": "Preguntar otra vez Tendenzzia sobre cerradura y tirador en puertas pasarela",
+            "completada": 0,
+            "notas": "",
+            "gremio": "Carpintería"
+          },
+          {
+            "id": "t_1786620109089",
+            "completada": 0,
+            "gremio": "Albañilería",
+            "notas": "",
+            "actividad": "Pedir suelo baño PB que está en tendezzia",
+            "fecha_creado": "2026-08-13T11:21:49.089Z",
+            "obra_id": "6",
+            "fecha_semana": "2026-08-24",
+            "dia_semana": "Martes"
+          },
+          {
+            "id": "t_1786620172590",
+            "dia_semana": "Miércoles",
+            "fecha_creado": "2026-08-13T11:22:52.590Z",
+            "gremio": "Albañilería",
+            "actividad": "Hablar con Fran para que retome Almirante 32 y se organice para comenzar",
+            "obra_id": "6",
+            "fecha_semana": "2026-08-24",
+            "notas": "Ppto aprobado por la propiedad",
+            "completada": 0
+          },
+          {
+            "id": "t_1786621818965",
+            "obra_id": "o_1786512112062",
+            "fecha_creado": "2026-08-13T11:50:18.965Z",
+            "fecha_semana": "2026-08-24",
+            "completada": 0,
+            "notas": "Angel",
+            "dia_semana": "Lunes",
+            "gremio": "Albañilería",
+            "actividad": "Ir revisando material de passive para la vivienda por si hay que pedir más material"
+          },
+          {
+            "id": "t_1786622531525",
+            "actividad": "Avisar a Fran para que cuelgue la ud ext y finalice la instalación",
+            "dia_semana": "Martes",
+            "fecha_semana": "2026-08-24",
+            "fecha_creado": "2026-08-13T12:02:11.525Z",
+            "gremio": "Instalaciones",
+            "obra_id": "7",
+            "notas": "",
+            "completada": 0
+          },
+          {
+            "id": "t_1786622592143",
+            "notas": "LEON",
+            "obra_id": "7",
+            "actividad": "Seguimos esperando la puerta de entrada de la vivienda",
+            "dia_semana": "Miércoles",
+            "fecha_semana": "2026-08-24",
+            "fecha_creado": "2026-08-13T12:03:12.143Z",
+            "gremio": "Carpintería",
+            "completada": 0
+          },
+          {
+            "id": "t_1786623670399",
+            "actividad": "Hablar con Ernesto de los extras para poder ejecutarlos",
+            "fecha_creado": "2026-08-13T12:21:10.399Z",
+            "completada": 0,
+            "notas": "",
+            "obra_id": "7",
+            "fecha_semana": "2026-08-31",
+            "gremio": "Otros",
+            "dia_semana": "Lunes"
+          },
+          {
+            "id": "t_1786623762316",
+            "fecha_semana": "2026-08-31",
+            "gremio": "Instalaciones",
+            "dia_semana": "Martes",
+            "fecha_creado": "2026-08-13T12:22:42.316Z",
+            "completada": 0,
+            "notas": "",
+            "actividad": "Pedido iluminacion vivienda el 12-08-26, revisar como va el pedido",
+            "obra_id": "7"
+          },
+          {
+            "id": "t_1786623867870",
+            "gremio": "Albañilería",
+            "completada": 1,
+            "obra_id": "7",
+            "actividad": "Hace pedidos de porcelanico para cocina y encimera de aseo",
+            "fecha_semana": "2026-08-31",
+            "dia_semana": "Martes",
+            "notas": "",
+            "fecha_creado": "2026-08-13T12:24:27.870Z"
+          },
+          {
+            "id": "t_1786623937354",
+            "gremio": "Instalaciones",
+            "dia_semana": "Martes",
+            "actividad": "Hablar con Mario para ver las rejillas de la fachada trasera de la vivienda y en el patio interior",
+            "obra_id": "7",
+            "completada": 0,
+            "notas": "",
+            "fecha_semana": "2026-08-31",
+            "fecha_creado": "2026-08-13T12:25:37.354Z"
+          },
+          {
+            "id": "t_1786624194468",
+            "dia_semana": "Martes",
+            "gremio": "Instalaciones",
+            "fecha_semana": "2026-08-31",
+            "obra_id": "7",
+            "actividad": "Revisar el revestimiento del patio interior por las humedades y grietas",
+            "notas": "",
+            "fecha_creado": "2026-08-13T12:29:54.468Z",
+            "completada": 0
+          },
+          {
+            "id": "t_1786687380001",
+            "fecha_creado": "2026-08-14T06:03:00.001Z",
+            "gremio": "Otros",
+            "dia_semana": "Lunes",
+            "actividad": "Revisar documentacion ocupacion via publica",
+            "fecha_semana": "2026-08-31",
+            "obra_id": "o_1786512112062",
+            "notas": "Expediente paralizado por falta de actualizacion de documentacion",
+            "completada": 0
+          },
+          {
+            "id": "t_1786689586537_gtanjx",
+            "dia_semana": "Lunes",
+            "notas": "Ppto aprobado por la propiedad",
+            "obra_id": "6",
+            "gremio": "Albañilería",
+            "actividad": "Hablar con Fran para que retome Almirante 32 y se organice para comenzar",
+            "fecha_creado": "2026-08-14T06:39:46.537Z",
+            "completada": 0,
+            "fecha_semana": "2026-08-31"
+          },
+          {
+            "id": "t_1786690061420",
+            "actividad": "Hablar con Alfonso para ver cuando se podria instalar el parket",
+            "obra_id": "5",
+            "notas": "",
+            "dia_semana": "Lunes",
+            "fecha_semana": "2026-08-24",
+            "completada": 0,
+            "gremio": "Otros",
+            "fecha_creado": "2026-08-14T06:47:41.420Z"
+          },
+          {
+            "id": "t_1786690191199",
+            "fecha_creado": "2026-08-14T06:49:51.199Z",
+            "fecha_semana": "2026-08-24",
+            "completada": 0,
+            "gremio": "Otros",
+            "obra_id": "o_1786512112062",
+            "dia_semana": "Lunes",
+            "actividad": "Revisar notificacion Ayto el 14-07 q solicitaba mas documentos actualizados",
+            "notas": "el 14/08 le pedi a Jose Lafarge esos documentos actualizados."
+          },
+          {
+            "id": "t_1786690337507",
+            "completada": 0,
+            "fecha_semana": "2026-08-31",
+            "actividad": "Enviado mediciones a Moldecor para valorar la obra. 14/08",
+            "fecha_creado": "2026-08-14T06:52:17.507Z",
+            "notas": "",
+            "obra_id": "o_1786512112062",
+            "dia_semana": "Lunes",
+            "gremio": "Pladur / Yeso"
+          },
+          {
+            "id": "t_sim_101",
+            "gremio": "Electricidad",
+            "actividad": "Repaso conexionado cuadro secundario y mecanismos planta 1",
+            "completada": 1,
+            "fecha_semana": "2026-10-12",
+            "dia_semana": "Martes",
+            "notas": "Verificado con comprobador de tensión y disparo de diferenciales. Todo operativo conforme.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_101_1\",\"fecha_anterior\":\"2026-10-09\",\"dia_anterior\":\"Viernes\",\"fecha_nueva\":\"2026-10-13\",\"dia_nuevo\":\"Martes\",\"tags\":[\"Falta material\"],\"motivo\":\"Falta material\",\"detalle\":\"Pendiente entrega de magnetotérmicos diferenciales 40A curva C por Schneider.\",\"fecha_registro\":\"2026-10-09T16:30:00.000Z\"}]]",
+            "fecha_creado": "2026-10-08T09:15:00.000Z",
+            "obra_id": "obra_sim_1"
+          },
+          {
+            "id": "t_sim_102",
+            "obra_id": "obra_sim_2",
+            "notas": "Prueba de presión hidráulica superada a 6 bar durante 4 horas sin caída de manómetro.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_102_1\",\"fecha_anterior\":\"2026-10-12\",\"dia_anterior\":\"Lunes\",\"fecha_nueva\":\"2026-10-13\",\"dia_nuevo\":\"Martes\",\"tags\":[\"Ajuste técnico\"],\"motivo\":\"Ajuste técnico\",\"detalle\":\"Ajuste de purgadores automáticos y llaves micrométricas en manifold cocina.\",\"fecha_registro\":\"2026-10-12T14:10:00.000Z\"}]]",
+            "dia_semana": "Martes",
+            "actividad": "Repaso estanqueidad colectores y circuitos suelo radiante",
+            "fecha_creado": "2026-10-10T11:00:00.000Z",
+            "fecha_semana": "2026-10-12",
+            "completada": 1,
+            "gremio": "Fontanería"
+          },
+          {
+            "id": "t_sim_103",
+            "obra_id": "obra_sim_3",
+            "gremio": "Pladur / Yeso",
+            "completada": 1,
+            "actividad": "Repaso encintado fino de juntas y foseados luz indirecta salón",
+            "notas": "Inspeccionado con foco a luz rasante. Superficie Q4 perfecta para recibir pintura.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_103_1\",\"fecha_anterior\":\"2026-10-09\",\"dia_anterior\":\"Viernes\",\"fecha_nueva\":\"2026-10-14\",\"dia_nuevo\":\"Miércoles\",\"tags\":[\"Retoque de acabado\"],\"motivo\":\"Retoque de acabado\",\"detalle\":\"Faltaba afinado de esquinas interiores con pasta de fraguado rápido.\",\"fecha_registro\":\"2026-10-09T17:00:00.000Z\"}]]",
+            "fecha_creado": "2026-10-07T08:30:00.000Z",
+            "dia_semana": "Miércoles",
+            "fecha_semana": "2026-10-12"
+          },
+          {
+            "id": "t_sim_104",
+            "dia_semana": "Miércoles",
+            "actividad": "Repaso equilibrado de caudal y difusores sala de juntas",
+            "fecha_semana": "2026-10-12",
+            "notas": "Caudalímetro calibrado. Nivel sonoro por debajo de 32 dBA según prescripción.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_104_1\",\"fecha_anterior\":\"2026-10-08\",\"dia_anterior\":\"Jueves\",\"fecha_nueva\":\"2026-10-14\",\"dia_nuevo\":\"Miércoles\",\"tags\":[\"Coordinación gremios\"],\"motivo\":\"Coordinación gremios\",\"detalle\":\"Coincidencia con montaje de mamparas de vidrio en el mismo acceso.\",\"fecha_registro\":\"2026-10-08T15:45:00.000Z\"}]]",
+            "completada": 1,
+            "gremio": "Climatización",
+            "obra_id": "obra_sim_4",
+            "fecha_creado": "2026-10-06T10:00:00.000Z"
+          },
+          {
+            "id": "t_sim_105",
+            "fecha_creado": "2026-10-05T09:00:00.000Z",
+            "fecha_semana": "2026-10-12",
+            "dia_semana": "Jueves",
+            "gremio": "Pintura",
+            "actividad": "Repaso manos de pintura terminación y recorte zócalos suite principal",
+            "notas": "Acabado liso satinado sin sombras. Aprobado por el arquitecto técnico.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_105_1\",\"fecha_anterior\":\"2026-10-08\",\"dia_anterior\":\"Jueves\",\"fecha_nueva\":\"2026-10-12\",\"dia_nuevo\":\"Lunes\",\"tags\":[\"Humedad en soporte\"],\"motivo\":\"Humedad en soporte\",\"detalle\":\"Se requirió deshumidificador por secado lento del yeso.\",\"fecha_registro\":\"2026-10-08T12:00:00.000Z\"},{\"id\":\"apl_sim_105_2\",\"fecha_anterior\":\"2026-10-12\",\"dia_anterior\":\"Lunes\",\"fecha_nueva\":\"2026-10-15\",\"dia_nuevo\":\"Jueves\",\"tags\":[\"Espera de gremio previo\"],\"motivo\":\"Espera de gremio previo\",\"detalle\":\"Montaje de armarios empotrados provocó pequeños roces a repasar.\",\"fecha_registro\":\"2026-10-12T18:00:00.000Z\"}]]",
+            "completada": 1,
+            "obra_id": "obra_sim_1"
+          },
+          {
+            "id": "t_sim_106",
+            "gremio": "Carpintería Madera",
+            "fecha_creado": "2026-10-09T14:00:00.000Z",
+            "fecha_semana": "2026-10-12",
+            "completada": 1,
+            "obra_id": "obra_sim_2",
+            "dia_semana": "Jueves",
+            "notas": "Deslizamiento suave, tope amortiguador ajustado a ras de jamba.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_106_1\",\"fecha_anterior\":\"2026-10-13\",\"dia_anterior\":\"Martes\",\"fecha_nueva\":\"2026-10-15\",\"dia_nuevo\":\"Jueves\",\"tags\":[\"Ajuste herrajes\"],\"motivo\":\"Ajuste herrajes\",\"detalle\":\"Sustitución de juego de rodamientos de guiado por holgura.\",\"fecha_registro\":\"2026-10-13T11:20:00.000Z\"}]]",
+            "actividad": "Repaso ajuste hojas correderas empotradas y frenos Scrigno"
+          },
+          {
+            "id": "t_sim_107",
+            "fecha_semana": "2026-10-12",
+            "actividad": "Repaso rejuntado porcelánico gran formato y sellado elástico terraza",
+            "gremio": "Albañilería",
+            "completada": 1,
+            "fecha_creado": "2026-10-08T16:00:00.000Z",
+            "obra_id": "obra_sim_3",
+            "notas": "Borada epoxi antimoho terminada y limpia. Junta de dilatación perimetral sellada.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_107_1\",\"fecha_anterior\":\"2026-10-12\",\"dia_anterior\":\"Lunes\",\"fecha_nueva\":\"2026-10-16\",\"dia_nuevo\":\"Viernes\",\"tags\":[\"Climatología\"],\"motivo\":\"Climatología\",\"detalle\":\"Lluvia y viento impidieron la aplicación segura de la resina exterior.\",\"fecha_registro\":\"2026-10-12T08:45:00.000Z\"}]]",
+            "dia_semana": "Viernes"
+          },
+          {
+            "id": "t_sim_108",
+            "fecha_semana": "2026-10-12",
+            "notas": "Perfil base de aluminio fijado con taco químico Hilti. Nivelación láser impecable.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_108_1\",\"fecha_anterior\":\"2026-10-14\",\"dia_anterior\":\"Miércoles\",\"fecha_nueva\":\"2026-10-16\",\"dia_nuevo\":\"Viernes\",\"tags\":[\"Falta material\"],\"motivo\":\"Falta material\",\"detalle\":\"Esperando tacos químicos estructurales de fraguado rápido.\",\"fecha_registro\":\"2026-10-14T10:15:00.000Z\"}]]",
+            "dia_semana": "Viernes",
+            "fecha_creado": "2026-10-11T12:00:00.000Z",
+            "completada": 1,
+            "obra_id": "obra_sim_4",
+            "gremio": "Cerrajería",
+            "actividad": "Repaso anclajes y alineación barandilla de vidrio escalera principal"
+          },
+          {
+            "id": "t_sim_201",
+            "dia_semana": "Lunes",
+            "gremio": "Carpintería Aluminio",
+            "fecha_semana": "2026-10-19",
+            "actividad": "Repaso estanqueidad y cierre oscilobatiente balconeras fachada sur",
+            "obra_id": "obra_sim_1",
+            "completada": 1,
+            "notas": "Regulación de compases y puntos de cierre. Test de humo y estanqueidad ok.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_201_1\",\"fecha_anterior\":\"2026-10-15\",\"dia_anterior\":\"Jueves\",\"fecha_nueva\":\"2026-10-19\",\"dia_nuevo\":\"Lunes\",\"tags\":[\"Ajuste herrajes\"],\"motivo\":\"Ajuste herrajes\",\"detalle\":\"Rozaba bulón inferior en marco de hoja derecha.\",\"fecha_registro\":\"2026-10-15T16:00:00.000Z\"}]]",
+            "fecha_creado": "2026-10-13T10:30:00.000Z"
+          },
+          {
+            "id": "t_sim_202",
+            "obra_id": "obra_sim_2",
+            "completada": 1,
+            "actividad": "Repaso programación domótica y escenas iluminación DALI / KNX",
+            "gremio": "Electricidad",
+            "fecha_semana": "2026-10-19",
+            "dia_semana": "Lunes",
+            "notas": "Pasarela KNX reprogramada. Escenas \"Bienvenida\", \"Cine\" y \"Noche\" funcionando al 100%.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_202_1\",\"fecha_anterior\":\"2026-10-16\",\"dia_anterior\":\"Viernes\",\"fecha_nueva\":\"2026-10-19\",\"dia_nuevo\":\"Lunes\",\"tags\":[\"Retraso subcontrata\"],\"motivo\":\"Retraso subcontrata\",\"detalle\":\"Técnico integrador domótico no pudo asistir por cierre de obra el viernes.\",\"fecha_registro\":\"2026-10-16T13:30:00.000Z\"}]]",
+            "fecha_creado": "2026-10-14T15:00:00.000Z"
+          },
+          {
+            "id": "t_sim_203",
+            "actividad": "Repaso y puesta en marcha aerotermia y acumulador ACS",
+            "fecha_creado": "2026-10-09T08:00:00.000Z",
+            "fecha_semana": "2026-10-19",
+            "notas": "Puesta en marcha con servicio técnico oficial Daikin. Certificado de garantía sellado.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_203_1\",\"fecha_anterior\":\"2026-10-13\",\"dia_anterior\":\"Martes\",\"fecha_nueva\":\"2026-10-16\",\"dia_nuevo\":\"Viernes\",\"tags\":[\"Falta suministro\"],\"motivo\":\"Falta suministro\",\"detalle\":\"Potencia provisional de obra insuficiente para arranque de compresor.\",\"fecha_registro\":\"2026-10-13T10:00:00.000Z\"},{\"id\":\"apl_sim_203_2\",\"fecha_anterior\":\"2026-10-16\",\"dia_anterior\":\"Viernes\",\"fecha_nueva\":\"2026-10-20\",\"dia_nuevo\":\"Martes\",\"tags\":[\"Cita técnica SAT\"],\"motivo\":\"Cita técnica SAT\",\"detalle\":\"Coordinación fecha con el técnico homologado del fabricante.\",\"fecha_registro\":\"2026-10-16T14:00:00.000Z\"}]]",
+            "dia_semana": "Martes",
+            "obra_id": "obra_sim_3",
+            "completada": 1,
+            "gremio": "Fontanería"
+          },
+          {
+            "id": "t_sim_204",
+            "notas": "Placas asentadas sin balanceos. Rejillas de climatización rasantes ajustadas.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_204_1\",\"fecha_anterior\":\"2026-10-16\",\"dia_anterior\":\"Viernes\",\"fecha_nueva\":\"2026-10-20\",\"dia_nuevo\":\"Martes\",\"tags\":[\"Paso de instalaciones\"],\"motivo\":\"Paso de instalaciones\",\"detalle\":\"Esperando tendido final de bandejas de fibra óptica bajo suelo.\",\"fecha_registro\":\"2026-10-16T17:15:00.000Z\"}]]",
+            "actividad": "Repaso sellado juntas y nivelación suelo técnico elevado en oficinas",
+            "fecha_semana": "2026-10-19",
+            "fecha_creado": "2026-10-15T11:00:00.000Z",
+            "completada": 1,
+            "gremio": "Pavimentos",
+            "dia_semana": "Martes",
+            "obra_id": "obra_sim_4"
+          },
+          {
+            "id": "t_sim_205",
+            "actividad": "Repaso pendientes y cazoletas de desagüe en cubierta solárium",
+            "dia_semana": "Miércoles",
+            "gremio": "Albañilería",
+            "fecha_creado": "2026-10-14T09:00:00.000Z",
+            "notas": "Prueba de inundación superada sin bolsas de agua. Evacuación inmediata.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_205_1\",\"fecha_anterior\":\"2026-10-16\",\"dia_anterior\":\"Viernes\",\"fecha_nueva\":\"2026-10-21\",\"dia_nuevo\":\"Miércoles\",\"tags\":[\"Ensayo estanqueidad\"],\"motivo\":\"Ensayo estanqueidad\",\"detalle\":\"Requeridas 48h de retención de agua antes de sellar las albardillas.\",\"fecha_registro\":\"2026-10-16T11:00:00.000Z\"}]]",
+            "fecha_semana": "2026-10-19",
+            "completada": 1,
+            "obra_id": "obra_sim_1"
+          },
+          {
+            "id": "t_sim_206",
+            "notas": "Lacado impecable en blanco roto satinado. Sin restos de polvo ni motas.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_206_1\",\"fecha_anterior\":\"2026-10-19\",\"dia_anterior\":\"Lunes\",\"fecha_nueva\":\"2026-10-21\",\"dia_nuevo\":\"Miércoles\",\"tags\":[\"Retoque posmontaje\"],\"motivo\":\"Retoque posmontaje\",\"detalle\":\"Pequeñas marcas en tapajuntas tras colocación de cerraduras magnéticas.\",\"fecha_registro\":\"2026-10-19T13:00:00.000Z\"}]]",
+            "actividad": "Repaso esmaltado laca en puertas de paso y marcos",
+            "fecha_creado": "2026-10-15T12:00:00.000Z",
+            "fecha_semana": "2026-10-19",
+            "dia_semana": "Miércoles",
+            "obra_id": "obra_sim_2",
+            "completada": 1,
+            "gremio": "Pintura"
+          },
+          {
+            "id": "t_sim_207",
+            "obra_id": "obra_sim_3",
+            "actividad": "Repaso sectorización riego por goteo y tepe perimetral piscina",
+            "dia_semana": "Jueves",
+            "fecha_semana": "2026-10-19",
+            "notas": "Electroválvulas conectadas a programador inteligente. Riego homogéneo comprobado.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_207_1\",\"fecha_anterior\":\"2026-10-16\",\"dia_anterior\":\"Viernes\",\"fecha_nueva\":\"2026-10-22\",\"dia_nuevo\":\"Jueves\",\"tags\":[\"Falta material\"],\"motivo\":\"Falta material\",\"detalle\":\"Retraso en el suministro de rollos de césped natural bermuda desde vivero.\",\"fecha_registro\":\"2026-10-16T12:45:00.000Z\"}]]",
+            "gremio": "Jardinería / Exteriores",
+            "completada": 1,
+            "fecha_creado": "2026-10-14T08:00:00.000Z"
+          },
+          {
+            "id": "t_sim_208",
+            "notas": "Fuerza de cierre y golpe final calibrados según normativa de evacuación CTE DB-SI.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_208_1\",\"fecha_anterior\":\"2026-10-20\",\"dia_anterior\":\"Martes\",\"fecha_nueva\":\"2026-10-22\",\"dia_nuevo\":\"Jueves\",\"tags\":[\"Ajuste técnico\"],\"motivo\":\"Ajuste técnico\",\"detalle\":\"Regulación de selectores de cierre en puertas dobles planta 2 y 3.\",\"fecha_registro\":\"2026-10-20T16:20:00.000Z\"}]]",
+            "completada": 1,
+            "gremio": "Cerrajería",
+            "dia_semana": "Jueves",
+            "fecha_semana": "2026-10-19",
+            "obra_id": "obra_sim_4",
+            "actividad": "Repaso muelles cierrapuertas cortafuegos RF-60 en núcleos de escalera",
+            "fecha_creado": "2026-10-16T14:00:00.000Z"
+          },
+          {
+            "id": "t_sim_209",
+            "fecha_creado": "2026-10-18T17:00:00.000Z",
+            "dia_semana": "Viernes",
+            "obra_id": "obra_sim_1",
+            "fecha_semana": "2026-10-19",
+            "actividad": "Repaso desincrustado final restos de cemento y cristales en fachada",
+            "gremio": "Limpieza Obra",
+            "notas": "Limpieza con máquina de agua osmotizada en altura. Cristales y perfiles impolutos.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_209_1\",\"fecha_anterior\":\"2026-10-21\",\"dia_anterior\":\"Miércoles\",\"fecha_nueva\":\"2026-10-23\",\"dia_nuevo\":\"Viernes\",\"tags\":[\"Espera andamio\"],\"motivo\":\"Espera andamio\",\"detalle\":\"Desmontaje del andamio de fachada completado la mañana del jueves.\",\"fecha_registro\":\"2026-10-21T09:15:00.000Z\"}]]",
+            "completada": 1
+          },
+          {
+            "id": "t_sim_210",
+            "completada": 1,
+            "actividad": "Repaso pulido y sellado encimera porcelánica isla Neolith",
+            "fecha_semana": "2026-10-19",
+            "fecha_creado": "2026-10-17T11:00:00.000Z",
+            "gremio": "Marmolista",
+            "obra_id": "obra_sim_2",
+            "dia_semana": "Viernes",
+            "notas": "Juntas a inglete selladas con masilla bicomponente al tono exacto. Tratamiento antimanchas aplicado.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_210_1\",\"fecha_anterior\":\"2026-10-20\",\"dia_anterior\":\"Martes\",\"fecha_nueva\":\"2026-10-23\",\"dia_nuevo\":\"Viernes\",\"tags\":[\"Detalle de acabado\"],\"motivo\":\"Detalle de acabado\",\"detalle\":\"Ajuste milimétrico de cajeado para enchufe escamoteable y placa inducción.\",\"fecha_registro\":\"2026-10-20T12:00:00.000Z\"}]]"
+          },
+          {
+            "id": "t_sim_301",
+            "notas": "Electrolisis salina y sonda de pH calibradas. Agua en parámetros higiénico-sanitarios.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_301_1\",\"fecha_anterior\":\"2026-10-22\",\"dia_anterior\":\"Jueves\",\"fecha_nueva\":\"2026-10-26\",\"dia_nuevo\":\"Lunes\",\"tags\":[\"Falta material\"],\"motivo\":\"Falta material\",\"detalle\":\"Pendiente recibir caja de superficie estanca IP66 para clorador.\",\"fecha_registro\":\"2026-10-22T15:30:00.000Z\"}]]",
+            "fecha_creado": "2026-10-20T09:00:00.000Z",
+            "dia_semana": "Lunes",
+            "fecha_semana": "2026-10-26",
+            "gremio": "Electricidad",
+            "actividad": "Repaso conexionado cuadro de mando y bomba clorador salino piscina",
+            "obra_id": "obra_sim_3",
+            "completada": 1
+          },
+          {
+            "id": "t_sim_302",
+            "gremio": "Telecomunicaciones",
+            "fecha_semana": "2026-10-26",
+            "dia_semana": "Lunes",
+            "fecha_creado": "2026-10-18T10:00:00.000Z",
+            "actividad": "Repaso certificación tomas de datos Cat6A en puestos operativos",
+            "completada": 1,
+            "notas": "128 tomas testeadas con certificador Fluke. 100% aprobado en banda Gigabit.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_302_1\",\"fecha_anterior\":\"2026-10-21\",\"dia_anterior\":\"Miércoles\",\"fecha_nueva\":\"2026-10-23\",\"dia_nuevo\":\"Viernes\",\"tags\":[\"Avería equipo\"],\"motivo\":\"Avería equipo\",\"detalle\":\"Certificador de red en calibración anual obligatoria.\",\"fecha_registro\":\"2026-10-21T08:30:00.000Z\"},{\"id\":\"apl_sim_302_2\",\"fecha_anterior\":\"2026-10-23\",\"dia_anterior\":\"Viernes\",\"fecha_nueva\":\"2026-10-26\",\"dia_nuevo\":\"Lunes\",\"tags\":[\"Reetiquetado\"],\"motivo\":\"Reetiquetado\",\"detalle\":\"Cambio de nomenclatura en patch panels según petición del cliente.\",\"fecha_registro\":\"2026-10-23T16:00:00.000Z\"}]]",
+            "obra_id": "obra_sim_4"
+          },
+          {
+            "id": "t_sim_303",
+            "obra_id": "obra_sim_1",
+            "notas": "Bombillos antibumping TESA instalados. Tarjetas de seguridad entregadas en sobre cerrado.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_303_1\",\"fecha_anterior\":\"2026-10-23\",\"dia_anterior\":\"Viernes\",\"fecha_nueva\":\"2026-10-27\",\"dia_nuevo\":\"Martes\",\"tags\":[\"Falta material\"],\"motivo\":\"Falta material\",\"detalle\":\"Plazo de entrega de fábrica para amaestramiento de 16 cilindros.\",\"fecha_registro\":\"2026-10-23T11:45:00.000Z\"}]]",
+            "completada": 1,
+            "actividad": "Repaso cilindros alta seguridad amaestrados en puertas de acceso",
+            "fecha_semana": "2026-10-26",
+            "gremio": "Cerrajería",
+            "fecha_creado": "2026-10-21T13:00:00.000Z",
+            "dia_semana": "Martes"
+          },
+          {
+            "id": "t_sim_304",
+            "dia_semana": "Martes",
+            "fecha_creado": "2026-10-22T16:00:00.000Z",
+            "gremio": "Climatización",
+            "fecha_semana": "2026-10-26",
+            "obra_id": "obra_sim_2",
+            "notas": "Rejillas rasantes Madel perfectamente alineadas sin juntas visibles.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_304_1\",\"fecha_anterior\":\"2026-10-26\",\"dia_anterior\":\"Lunes\",\"fecha_nueva\":\"2026-10-27\",\"dia_nuevo\":\"Martes\",\"tags\":[\"Retoque acabado\"],\"motivo\":\"Retoque acabado\",\"detalle\":\"Una pieza tenía pequeño arañazo de transporte y se llevó a taller para relacado.\",\"fecha_registro\":\"2026-10-26T10:10:00.000Z\"}]]",
+            "completada": 1,
+            "actividad": "Repaso rejillas lineales lacadas y retorno aire en falsos techos"
+          },
+          {
+            "id": "t_sim_305",
+            "fecha_semana": "2026-10-26",
+            "fecha_creado": "2026-10-23T09:30:00.000Z",
+            "actividad": "Repaso motorización y lamas orientables pérgola bioclimática",
+            "completada": 1,
+            "notas": "Sensores de lluvia Somfy programados. Cierre estanco y canalización de pluviales correcta.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_305_1\",\"fecha_anterior\":\"2026-10-26\",\"dia_anterior\":\"Lunes\",\"fecha_nueva\":\"2026-10-28\",\"dia_nuevo\":\"Miércoles\",\"tags\":[\"Ajuste eléctrico\"],\"motivo\":\"Ajuste eléctrico\",\"detalle\":\"Sincronización de finales de carrera y pareo con mando multifunción.\",\"fecha_registro\":\"2026-10-26T14:30:00.000Z\"}]]",
+            "gremio": "Carpintería Aluminio",
+            "obra_id": "obra_sim_3",
+            "dia_semana": "Miércoles"
+          },
+          {
+            "id": "t_sim_306",
+            "completada": 1,
+            "gremio": "Pladur / Yeso",
+            "obra_id": "obra_sim_4",
+            "fecha_semana": "2026-10-26",
+            "fecha_creado": "2026-10-22T08:00:00.000Z",
+            "dia_semana": "Miércoles",
+            "notas": "Placas Knauf Danoline revisadas. Perfilería oculta fijada y enrasada.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_306_1\",\"fecha_anterior\":\"2026-10-27\",\"dia_anterior\":\"Martes\",\"fecha_nueva\":\"2026-10-28\",\"dia_nuevo\":\"Miércoles\",\"tags\":[\"Coordinación gremios\"],\"motivo\":\"Coordinación gremios\",\"detalle\":\"Instalación de proyector audiovisual retrasó el cierre de la última hilera.\",\"fecha_registro\":\"2026-10-27T17:00:00.000Z\"}]]",
+            "actividad": "Repaso techos acústicos fonoabsorbentes en sala de conferencias"
+          },
+          {
+            "id": "t_sim_307",
+            "dia_semana": "Jueves",
+            "notas": "Termostáticos Hansgrohe calibrados a 38ºC. Sin filtraciones en sifón extraplano.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_307_1\",\"fecha_anterior\":\"2026-10-27\",\"dia_anterior\":\"Martes\",\"fecha_nueva\":\"2026-10-29\",\"dia_nuevo\":\"Jueves\",\"tags\":[\"Falta material\"],\"motivo\":\"Falta material\",\"detalle\":\"Sustitución de embellecedor cormado por defecto de fábrica en el cromado.\",\"fecha_registro\":\"2026-10-27T11:00:00.000Z\"}]]",
+            "actividad": "Repaso griferías empotradas y prueba hidrostática bañera exenta",
+            "fecha_semana": "2026-10-26",
+            "completada": 1,
+            "obra_id": "obra_sim_1",
+            "gremio": "Fontanería",
+            "fecha_creado": "2026-10-24T12:00:00.000Z"
+          },
+          {
+            "id": "t_sim_308",
+            "notas": "Rastrelado y clipado oculto completado. Nivelación y pendiente a sumidero verificadas.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_308_1\",\"fecha_anterior\":\"2026-10-28\",\"dia_anterior\":\"Miércoles\",\"fecha_nueva\":\"2026-10-29\",\"dia_nuevo\":\"Jueves\",\"tags\":[\"Ajuste nivelación\"],\"motivo\":\"Ajuste nivelación\",\"detalle\":\"Regulación milimétrica de plots autonivelantes en zona perimetral.\",\"fecha_registro\":\"2026-10-28T16:00:00.000Z\"}]]",
+            "actividad": "Repaso solado terraza con tarima tecnológica de composite sobre plots",
+            "fecha_creado": "2026-10-25T10:00:00.000Z",
+            "fecha_semana": "2026-10-26",
+            "dia_semana": "Jueves",
+            "obra_id": "obra_sim_2",
+            "completada": 1,
+            "gremio": "Albañilería"
+          },
+          {
+            "id": "t_sim_309",
+            "fecha_creado": "2026-10-26T08:30:00.000Z",
+            "gremio": "Pintura",
+            "notas": "Retoques finales tras desprotección de suelos. Obra lista para recepción definitiva.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_309_1\",\"fecha_anterior\":\"2026-10-28\",\"dia_anterior\":\"Miércoles\",\"fecha_nueva\":\"2026-10-30\",\"dia_nuevo\":\"Viernes\",\"tags\":[\"Coordinación limpieza\"],\"motivo\":\"Coordinación limpieza\",\"detalle\":\"Coordinado con el fin de la limpieza profunda de ventanales y suelos.\",\"fecha_registro\":\"2026-10-28T18:00:00.000Z\"}]]",
+            "fecha_semana": "2026-10-26",
+            "dia_semana": "Viernes",
+            "actividad": "Repaso general de pintura previo a entrega de llaves y recepción",
+            "completada": 1,
+            "obra_id": "obra_sim_3"
+          },
+          {
+            "id": "t_sim_310",
+            "gremio": "Seguridad y PCI",
+            "dia_semana": "Viernes",
+            "fecha_creado": "2026-10-26T11:00:00.000Z",
+            "actividad": "Repaso centralita detección de incendios y pulsadores de emergencia",
+            "notas": "Conexión con central receptora de alarmas validada. Sirenas y compuertas ensayadas con éxito.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_310_1\",\"fecha_anterior\":\"2026-10-29\",\"dia_anterior\":\"Jueves\",\"fecha_nueva\":\"2026-10-30\",\"dia_nuevo\":\"Viernes\",\"tags\":[\"Prueba técnica oficial\"],\"motivo\":\"Prueba técnica oficial\",\"detalle\":\"Presencia del técnico de la empresa de seguridad para firma del acta.\",\"fecha_registro\":\"2026-10-29T15:00:00.000Z\"}]]",
+            "fecha_semana": "2026-10-26",
+            "obra_id": "obra_sim_4",
+            "completada": 1
+          },
+          {
+            "id": "t_sim_311",
+            "completada": 1,
+            "actividad": "Repaso abrillantado y desinfección final antes de entrega a clientes",
+            "gremio": "Limpieza Obra",
+            "fecha_semana": "2026-10-26",
+            "dia_semana": "Sábado",
+            "obra_id": "obra_sim_1",
+            "notas": "Acabado de lujo. Llaves precintadas y listas para entrega el 2 de Noviembre.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_311_1\",\"fecha_anterior\":\"2026-10-30\",\"dia_anterior\":\"Viernes\",\"fecha_nueva\":\"2026-10-31\",\"dia_nuevo\":\"Sábado\",\"tags\":[\"Planificación entrega\"],\"motivo\":\"Planificación entrega\",\"detalle\":\"Ajuste de agenda con la promotora para entrega de llaves.\",\"fecha_registro\":\"2026-10-30T17:30:00.000Z\"}]]",
+            "fecha_creado": "2026-10-28T15:00:00.000Z"
+          },
+          {
+            "id": "t_sim_312",
+            "gremio": "Electricidad",
+            "fecha_creado": "2026-10-27T10:00:00.000Z",
+            "actividad": "Repaso balizamiento LED exterior en viales de acceso parking",
+            "completada": 0,
+            "fecha_semana": "2026-10-26",
+            "obra_id": "obra_sim_4",
+            "notas": "Pendiente llegada de balizas desde aduanas.\n\n[HISTORIAL_APLAZAMIENTOS: [{\"id\":\"apl_sim_312_1\",\"fecha_anterior\":\"2026-10-29\",\"dia_anterior\":\"Jueves\",\"fecha_nueva\":\"2026-10-31\",\"dia_nuevo\":\"Sábado\",\"tags\":[\"Falta material\"],\"motivo\":\"Falta material\",\"detalle\":\"Retención de envío internacional en terminal aduanera.\",\"fecha_registro\":\"2026-10-29T16:00:00.000Z\"}]]",
+            "dia_semana": "Sábado"
+          }
+        ]
+      }
+    }
+  }
+}

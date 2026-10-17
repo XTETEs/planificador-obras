@@ -2,3 +2,5 @@ node_modules
 dist
 .env
 .vercel
+backups/*
+!backups/firestore_backup_latest.json

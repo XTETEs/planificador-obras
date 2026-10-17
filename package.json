@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "backup": "node scripts/backup.mjs",
+    "backup:db": "node scripts/export-firestore-backup.mjs",
+    "restore:db": "node scripts/restore-firestore-backup.mjs"
   },
   "engines": {
     "node": ">=18"
