@@ -44,10 +44,13 @@ Mail,
 Send,
 Share2,
 ExternalLink,
-CheckCheck
+CheckCheck,
+Wifi,
+WifiOff,
+CloudUpload
 } from 'lucide-react';
 import { doc, setDoc } from 'firebase/firestore';
-import { migrateLocalDataToFirestore, setUserContext, getCurrentUserId, forceCloudSync, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio, firestore } from './services/db.js';
+import { migrateLocalDataToFirestore, setUserContext, getCurrentUserId, forceCloudSync, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio, subscribeToOfflineStatus, flushOfflineQueue, firestore } from './services/db.js';
 import { onAuthUserChange, logout, CORPORATE_DOMAIN } from './services/auth.js';
 import { AuthView } from './components/AuthView.jsx';
 // EMBEDDED DATABASES ID
@@ -265,6 +268,11 @@ const [monthlyFilterGremio, setMonthlyFilterGremio] = useState('all');
 const [error, setError] = useState(null);
 const [successMessage, setSuccessMessage] = useState(null);
 const [syncing, setSyncing] = useState(false);
+const [offlineStatus, setOfflineStatus] = useState({
+  isOnline: typeof navigator !== 'undefined' ? navigator.onLine !== false : true,
+  pendingOfflineCount: 0,
+  isFlushing: false
+});
 const [isDictatingModalOpen, setIsDictatingModalOpen] = useState(false);
 const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
 const [isNewObraModalOpen, setIsNewObraModalOpen] = useState(false);
@@ -479,6 +487,23 @@ useEffect(() => {
   });
   return () => unsubscribe();
 }, [db, loadData]);
+
+// Suscripción al estado de Cobertura Móvil / Modo Obra Offline
+useEffect(() => {
+  const unsubOffline = subscribeToOfflineStatus((status) => {
+    setOfflineStatus({
+      isOnline: status.isOnline,
+      pendingOfflineCount: status.pendingOfflineCount || 0,
+      isFlushing: status.isFlushing || false
+    });
+    if (status.justSyncedCount && status.justSyncedCount > 0) {
+      setSuccessMessage(`✅ Cobertura recuperada: Se han sincronizado automáticamente ${status.justSyncedCount} cambio(s) guardados en obra con la nube.`);
+      setTimeout(() => setSuccessMessage(null), 5000);
+      loadData();
+    }
+  });
+  return () => unsubOffline();
+}, [loadData]);
 
 // Limpieza de base de datos SQLite local en IndexedDB para evitar que reaparezcan obras de prueba
 useEffect(() => {
@@ -1666,11 +1691,92 @@ rec.stop();
 rec.start();
 }
 };
-// AI Smart Parsing of dictation
+// Local Offline Smart Parser (Modo Obra Sin Cobertura)
+const parseDictationLocally = (rawText) => {
+  const defaultObraId = (selectedObraId && selectedObraId !== 'all')
+    ? selectedObraId
+    : (obras[0]?.[0] || '');
+  const segments = rawText
+    .split(/(?:[\.\n;]+|\b(?:luego|después|además|también|por otro lado)\b)/i)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const dayPatterns = [
+    { name: 'Lunes', regex: /\blunes\b/i },
+    { name: 'Martes', regex: /\bmartes\b/i },
+    { name: 'Miércoles', regex: /\bmi[eé]rcoles\b/i },
+    { name: 'Jueves', regex: /\bjueves\b/i },
+    { name: 'Viernes', regex: /\bviernes\b/i }
+  ];
+
+  const gremioKeywords = [
+    { gremio: 'Electricidad', regex: /\b(electric\w*|luz|cuadro|cable\w*|enchufe\w*|iluminaci\w*|luminaria\w*)\b/i },
+    { gremio: 'Fontanería', regex: /\b(fontaner\w*|agua|tuber\w*|desag[uü]e\w*|sanitario\w*|grif\w*|bajante\w*)\b/i },
+    { gremio: 'Pintura', regex: /\b(pintur\w*|pintar|esmalte|repaso de pintura|lijar|plastecer)\b/i },
+    { gremio: 'Pladur / Yeso', regex: /\b(pladur|yeso|tabique\w*|trasdosado\w*|falso techo|escayola)\b/i },
+    { gremio: 'Albañilería', regex: /\b(albañil\w*|alicat\w*|solad\w*|mortero|roza\w*|enfosc\w*|ladrillo\w*|baldosa\w*)\b/i },
+    { gremio: 'Carpintería', regex: /\b(carpinter\w*|puerta\w*|armario\w*|rodapi[eé]\w*|madera|tarima)\b/i },
+    { gremio: 'Climatización', regex: /\b(clima\w*|aire acondicionado|aerotermia|conducto\w*|fancoil|calefacci\w*|suelo radiante)\b/i },
+    { gremio: 'Cerramientos', regex: /\b(ventana\w*|cristal\w*|vidrio\w*|aluminio|pvc|cerrajer\w*|barandilla\w*)\b/i },
+    { gremio: 'Estructura', regex: /\b(estructur\w*|hormig[oó]n|forjado|pilar\w*|viga\w*|cimentaci\w*|ferralla)\b/i },
+    { gremio: 'Limpieza', regex: /\b(limpiez\w*|limpiar|escombro\w*|retirada)\b/i },
+    { gremio: 'Jardinería / Exteriores', regex: /\b(jard[ií]n\w*|exterior\w*|piscina|vallado|terraza)\b/i }
+  ];
+
+  let currentDay = 'Lunes';
+  let currentObra = defaultObraId;
+
+  return segments.map((seg) => {
+    for (const dp of dayPatterns) {
+      if (dp.regex.test(seg)) {
+        currentDay = dp.name;
+        break;
+      }
+    }
+    for (const o of obras) {
+      const obraName = (o[1] || '').trim();
+      if (obraName && seg.toLowerCase().includes(obraName.toLowerCase())) {
+        currentObra = o[0];
+        break;
+      }
+    }
+    let detectedGremio = 'ENUE';
+    for (const gk of gremioKeywords) {
+      if (gk.regex.test(seg)) {
+        detectedGremio = gk.gremio;
+        break;
+      }
+    }
+    let cleanAct = seg
+      .replace(/^(el|para el|en el)?\s*(lunes|martes|mi[eé]rcoles|jueves|viernes)\s*(hay que|toca|hacer|realizar)?\s*/i, '')
+      .trim();
+    if (!cleanAct) cleanAct = seg;
+    cleanAct = cleanAct.charAt(0).toUpperCase() + cleanAct.slice(1);
+
+    return {
+      obra_id: currentObra,
+      dia_semana: currentDay,
+      actividad: cleanAct,
+      gremio: detectedGremio,
+      notas: ''
+    };
+  });
+};
+
+// AI Smart Parsing of dictation (with automatic Offline Fallback at the construction site)
 const parseDictationWithAI = async () => {
 if (!transcript.trim()) return;
 setIsParsingSpeech(true);
 setError(null);
+
+if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+  const localTasks = parseDictationLocally(transcript);
+  setParsedTasks(localTasks);
+  setSuccessMessage('📡 Modo Obra Sin Cobertura: Dictado estructurado localmente en el dispositivo sin necesidad de internet.');
+  setIsParsingSpeech(false);
+  return;
+}
+
 try {
 const client = AiKit.createClient();
 const obrasTextList = obras.length > 0
@@ -1730,7 +1836,14 @@ setParsedTasks(resultJson);
 throw new Error('La IA no devolvió un formato de array adecuado.');
 }
 } catch (err) {
-setError('Error al procesar dictado con IA: ' + err.message);
+  // Si falla por falta de cobertura móvil en obra, usar automáticamente el motor local
+  const localTasks = parseDictationLocally(transcript);
+  if (localTasks.length > 0) {
+    setParsedTasks(localTasks);
+    setSuccessMessage('📡 Cobertura débil detectada: Dictado estructurado automáticamente en modo local del dispositivo.');
+  } else {
+    setError('Error al procesar dictado: ' + err.message);
+  }
 } finally {
 setIsParsingSpeech(false);
 }
@@ -1853,15 +1966,37 @@ return (
 <div className="min-w-0">
 <h1 className="text-base sm:text-xl md:text-2xl font-bold text-slate-950 flex flex-wrap items-center gap-2 leading-tight">
 <span className="truncate sm:whitespace-normal">Planificador Semanal / Repasos</span>
-{syncing ? (
-<span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200 animate-pulse">
-<RefreshCw className="w-3 h-3 mr-1 animate-spin" /> Sincronizando...
+{!offlineStatus.isOnline ? (
+<span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+  <WifiOff className="w-3 h-3 text-amber-700" />
+  <span>Modo Obra (Sin Cobertura{offlineStatus.pendingOfflineCount > 0 ? ` · ${offlineStatus.pendingOfflineCount} en cola` : ''})</span>
 </span>
+) : (syncing || offlineStatus.isFlushing) ? (
+<span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200 animate-pulse">
+<RefreshCw className="w-3 h-3 mr-1 animate-spin" /> {offlineStatus.pendingOfflineCount > 0 ? `Subiendo ${offlineStatus.pendingOfflineCount} cambios...` : 'Sincronizando...'}
+</span>
+) : offlineStatus.pendingOfflineCount > 0 ? (
+<button
+  type="button"
+  onClick={async () => {
+    setSyncing(true);
+    await flushOfflineQueue();
+    await forceCloudSync();
+    await loadData();
+    setSyncing(false);
+  }}
+  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition-colors cursor-pointer"
+  title="Hay cambios guardados en el dispositivo pendientes de subir. Toca para sincronizar ahora."
+>
+  <CloudUpload className="w-3 h-3 text-amber-600 animate-bounce" />
+  <span>{offlineStatus.pendingOfflineCount} pendientes de subir</span>
+</button>
 ) : (
 <button
   type="button"
   onClick={async () => {
     setSyncing(true);
+    await flushOfflineQueue();
     await forceCloudSync();
     await loadData();
     setSyncing(false);
@@ -1871,7 +2006,7 @@ return (
   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors cursor-pointer"
   title="Haz clic para forzar sincronización inmediata con todos tus dispositivos"
 >
-  <RefreshCw className="w-2.5 h-2.5 text-emerald-600" />
+  <Wifi className="w-2.5 h-2.5 text-emerald-600" />
   <span>Sincronizado ({todasLasTareas.length})</span>
 </button>
 )}
@@ -1969,6 +2104,58 @@ className="bg-slate-900 hover:bg-slate-800 text-white hover:cursor-pointer font-
 </div>
 </div>
 </div>
+
+{/* Banner de Modo Obra Sin Cobertura / Cola de Sincronización Offline */}
+{(!offlineStatus.isOnline || offlineStatus.pendingOfflineCount > 0) && (
+  <div className={`mb-4 p-3.5 sm:p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs transition-all ${
+    !offlineStatus.isOnline
+      ? 'bg-amber-50/95 border-amber-300 text-amber-950'
+      : 'bg-blue-50/90 border-blue-200 text-blue-950'
+  }`}>
+    <div className="flex items-start sm:items-center gap-3">
+      <div className={`p-2.5 rounded-xl shrink-0 ${
+        !offlineStatus.isOnline ? 'bg-amber-500 text-slate-950' : 'bg-blue-600 text-white'
+      }`}>
+        {!offlineStatus.isOnline ? <WifiOff className="w-5 h-5" /> : <CloudUpload className="w-5 h-5 animate-pulse" />}
+      </div>
+      <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-xs sm:text-sm font-extrabold">
+            {!offlineStatus.isOnline
+              ? 'Modo Obra Sin Cobertura Activo'
+              : `Sincronizando datos de obra (${offlineStatus.pendingOfflineCount} pendiente${offlineStatus.pendingOfflineCount === 1 ? '' : 's'})`}
+          </h3>
+          {offlineStatus.pendingOfflineCount > 0 && (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-200/80 text-amber-950 border border-amber-400">
+              {offlineStatus.pendingOfflineCount} guardado{offlineStatus.pendingOfflineCount === 1 ? '' : 's'} en este dispositivo
+            </span>
+          )}
+        </div>
+        <p className="text-[11px] sm:text-xs opacity-85 mt-0.5">
+          {!offlineStatus.isOnline
+            ? 'Puedes registrar tareas, marcar repasos, aplazar actividades o dictar con normalidad. Todo se guarda al instante en la memoria interna de tu móvil/tablet y se subirá solo en cuanto recuperes cobertura.'
+            : 'Se ha detectado conexión de datos. Subiendo automáticamente los cambios registrados en obra a la nube corporativa...'}
+        </p>
+      </div>
+    </div>
+    {offlineStatus.isOnline && offlineStatus.pendingOfflineCount > 0 && (
+      <button
+        type="button"
+        onClick={async () => {
+          setSyncing(true);
+          await flushOfflineQueue();
+          await forceCloudSync();
+          await loadData();
+          setSyncing(false);
+        }}
+        className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs"
+      >
+        <RefreshCw className={`w-3.5 h-3.5 ${offlineStatus.isFlushing ? 'animate-spin' : ''}`} />
+        <span>Subir ahora</span>
+      </button>
+    )}
+  </div>
+)}
 {/* Alerts panel */}
 {error && (
 <div className="mb-5 p-3.5 sm:p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 flex items-start gap-3">

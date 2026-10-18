@@ -58,6 +58,8 @@ let initPromise = null;
 
 let pending = 0;
 let listeners = [];
+let offlineStatusListeners = [];
+let isFlushingQueue = false;
 
 function notify(hasPending) {
   listeners.slice().forEach((fn) => {
@@ -67,6 +69,199 @@ function notify(hasPending) {
       console.error(e);
     }
   });
+}
+
+function getOfflineQueueKey(uid = currentUserId) {
+  return uid ? `enue_offline_queue_${uid}` : null;
+}
+
+export function getOfflineQueue(uid = currentUserId) {
+  const key = getOfflineQueueKey(uid);
+  if (!key || typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveOfflineQueue(queue, uid = currentUserId, extraEvent = null) {
+  const key = getOfflineQueueKey(uid);
+  if (!key || typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify(queue));
+  } catch (e) {
+    console.warn('Error guardando cola offline:', e);
+  }
+  notifyOfflineStatus(extraEvent);
+}
+
+function enqueueOfflineOperation(type, docId, data = null) {
+  if (!currentUserId || typeof window === 'undefined') return;
+  const queue = getOfflineQueue(currentUserId);
+  const category = type.includes('obra') ? 'obra' : 'tarea';
+  // Si ya había una operación pendiente sobre el mismo documento, actualizarla con el último estado
+  const filtered = queue.filter(item => !(item.category === category && String(item.docId) === String(docId)));
+  filtered.push({
+    opId: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    category,
+    type,
+    docId: String(docId),
+    data,
+    timestamp: new Date().toISOString()
+  });
+  saveOfflineQueue(filtered, currentUserId);
+}
+
+/**
+ * Aplica las operaciones locales pendientes encima de cualquier instantánea recibida de la nube
+ * para garantizar que ningún dato anotado sin cobertura desaparezca antes de sincronizarse.
+ */
+function applyOfflineQueueOverlay(targetObrasMap, targetTareasMap) {
+  const queue = getOfflineQueue(currentUserId);
+  if (!queue.length) return;
+  for (const op of queue) {
+    if (op.type === 'set_obra' && op.data) {
+      targetObrasMap.set(String(op.docId), op.data);
+    } else if (op.type === 'delete_obra') {
+      targetObrasMap.delete(String(op.docId));
+    } else if (op.type === 'set_tarea' && op.data) {
+      targetTareasMap.set(String(op.docId), op.data);
+    } else if (op.type === 'delete_tarea') {
+      targetTareasMap.delete(String(op.docId));
+    }
+  }
+}
+
+function notifyOfflineStatus(extraEvent = null) {
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+  const queue = getOfflineQueue(currentUserId);
+  const status = {
+    isOnline,
+    pendingOfflineCount: queue.length,
+    isFlushing: isFlushingQueue,
+    queue,
+    ...extraEvent
+  };
+  offlineStatusListeners.slice().forEach(fn => {
+    try {
+      fn(status);
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
+
+export function subscribeToOfflineStatus(fn) {
+  offlineStatusListeners.push(fn);
+  try {
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    const queue = getOfflineQueue(currentUserId);
+    fn({
+      isOnline,
+      pendingOfflineCount: queue.length,
+      isFlushing: isFlushingQueue,
+      queue
+    });
+  } catch (e) {}
+  return () => {
+    offlineStatusListeners = offlineStatusListeners.filter(f => f !== fn);
+  };
+}
+
+/**
+ * Envía a Firestore un cambio individual con límite de tiempo para evitar bloqueos por mala cobertura 3G/4G en obra
+ */
+function withNetworkTimeout(promise, ms = 4500) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('Tiempo de espera agotado por baja cobertura móvil'));
+    }, ms);
+    promise
+      .then((val) => {
+        clearTimeout(timer);
+        resolve(val);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+/**
+ * Vacía la cola de cambios acumulados en obra cuando vuelve la cobertura móvil o Wi-Fi
+ */
+export async function flushOfflineQueue() {
+  if (!currentUserId || isFlushingQueue) return { syncedCount: 0 };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    notifyOfflineStatus();
+    return { syncedCount: 0 };
+  }
+
+  const initialQueue = getOfflineQueue(currentUserId);
+  if (initialQueue.length === 0) {
+    notifyOfflineStatus();
+    return { syncedCount: 0 };
+  }
+
+  isFlushingQueue = true;
+  notifyOfflineStatus();
+
+  let syncedCount = 0;
+  const uidAtStart = currentUserId;
+
+  try {
+    for (const op of initialQueue) {
+      if (currentUserId !== uidAtStart) break;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) break;
+
+      try {
+        if (op.type === 'set_obra' && op.data) {
+          await withNetworkTimeout(
+            setDoc(doc(firestore, 'users', uidAtStart, 'obras', String(op.docId)), op.data, { merge: true })
+          );
+        } else if (op.type === 'delete_obra') {
+          await withNetworkTimeout(
+            deleteDoc(doc(firestore, 'users', uidAtStart, 'obras', String(op.docId)))
+          );
+        } else if (op.type === 'set_tarea' && op.data) {
+          await withNetworkTimeout(
+            setDoc(doc(firestore, 'users', uidAtStart, 'tareas', String(op.docId)), op.data, { merge: true })
+          );
+        } else if (op.type === 'delete_tarea') {
+          await withNetworkTimeout(
+            deleteDoc(doc(firestore, 'users', uidAtStart, 'tareas', String(op.docId)))
+          );
+        }
+
+        // Operación confirmada en la nube: eliminarla de la cola local
+        const currentQ = getOfflineQueue(uidAtStart).filter(item => item.opId !== op.opId);
+        saveOfflineQueue(currentQ, uidAtStart);
+        syncedCount++;
+      } catch (err) {
+        // Si falla por microcorte o falta de cobertura en la obra, se mantiene en la cola para el siguiente intento automático
+        console.warn('Operación retenida en cola local por baja cobertura:', op.type, op.docId, err?.message);
+        break;
+      }
+    }
+  } finally {
+    isFlushingQueue = false;
+    const remaining = getOfflineQueue(uidAtStart);
+    notifyOfflineStatus(
+      syncedCount > 0 && remaining.length === 0
+        ? { justSyncedCount: syncedCount }
+        : null
+    );
+    if (syncedCount > 0) {
+      notify(false);
+    }
+  }
+
+  return { syncedCount };
 }
 
 /**
@@ -109,10 +304,11 @@ export function setUserContext(user) {
   if (!currentUserId) {
     initPromise = Promise.resolve();
     notify(false);
+    notifyOfflineStatus();
     return initPromise;
   }
 
-  // 1. Cargar instantáneamente la caché local del usuario si existe (render en 0ms)
+  // 1. Cargar instantáneamente la caché local del usuario si existe (render en 0ms incluso sin cobertura en obra)
   if (typeof window !== 'undefined') {
     try {
       const rawObras = localStorage.getItem(`enue_cache_${currentUserId}_obras`);
@@ -133,14 +329,25 @@ export function setUserContext(user) {
           });
         }
       }
+      // Superponer cualquier operación guardada sin cobertura en el dispositivo
+      applyOfflineQueueOverlay(obrasMap, tareasMap);
     } catch (e) {
       console.warn('Error leyendo caché local instantánea:', e);
     }
   }
 
+  notifyOfflineStatus();
+
   initPromise = new Promise((resolve) => {
     let obrasReady = false;
     let tareasReady = false;
+
+    // Si estamos sin cobertura y ya tenemos datos en caché local, resolver de inmediato sin bloquear la pantalla
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      isInitialized = true;
+      resolve();
+      notify(false);
+    }
 
     async function checkReady() {
       if (obrasReady && tareasReady && !isInitialized) {
@@ -149,18 +356,22 @@ export function setUserContext(user) {
         resolve();
         notify(false);
 
+        // Si había cambios pendientes en la cola offline, sincronizarlos ahora
+        flushOfflineQueue();
+
         // Comprobar si es el primer acceso histórico de este usuario en Firestore
         try {
-          const userDocRef = doc(firestore, 'users', currentUserId);
-          const userSnap = await getDoc(userDocRef);
-          if (!userSnap.exists()) {
-            // Primer acceso del usuario corporativo: registrar perfil
-            await setDoc(userDocRef, {
-              email: user.email || '',
-              displayName: user.displayName || '',
-              initialized: true,
-              fecha_creado: new Date().toISOString()
-            });
+          if (typeof navigator === 'undefined' || navigator.onLine) {
+            const userDocRef = doc(firestore, 'users', currentUserId);
+            const userSnap = await getDoc(userDocRef);
+            if (!userSnap.exists()) {
+              await setDoc(userDocRef, {
+                email: user.email || '',
+                displayName: user.displayName || '',
+                initialized: true,
+                fecha_creado: new Date().toISOString()
+              });
+            }
           }
         } catch (err) {
           console.warn('Verificación de perfil de usuario en Firestore:', err?.message);
@@ -168,9 +379,15 @@ export function setUserContext(user) {
       }
     }
 
-    // Escucha en tiempo real de 'obras' para el usuario actual (reconstrucción completa para evitar desincronización de caché)
+    // Escucha en tiempo real de 'obras' para el usuario actual (reconstrucción completa + protección de cola offline)
     const obrasCol = collection(firestore, 'users', currentUserId, 'obras');
     unsubObras = onSnapshot(obrasCol, { includeMetadataChanges: true }, (snapshot) => {
+      // No sobrescribir con una caché vacía si no hay conexión y ya tenemos datos locales
+      if (snapshot.empty && snapshot.metadata.fromCache && obrasMap.size > 0) {
+        obrasReady = true;
+        checkReady();
+        return;
+      }
       const nextObrasMap = new Map();
       snapshot.docs.forEach((docSnap) => {
         const data = docSnap.data();
@@ -180,6 +397,7 @@ export function setUserContext(user) {
           activo: data.activo !== undefined ? Number(data.activo) : 1
         });
       });
+      applyOfflineQueueOverlay(nextObrasMap, tareasMap);
       obrasMap = nextObrasMap;
       obrasReady = true;
       saveLocalSnapshot();
@@ -191,9 +409,14 @@ export function setUserContext(user) {
       checkReady();
     });
 
-    // Escucha en tiempo real de 'tareas' para el usuario actual (reconstrucción completa para evitar desincronización de caché)
+    // Escucha en tiempo real de 'tareas' para el usuario actual (reconstrucción completa + protección de cola offline)
     const tareasCol = collection(firestore, 'users', currentUserId, 'tareas');
     unsubTareas = onSnapshot(tareasCol, { includeMetadataChanges: true }, (snapshot) => {
+      if (snapshot.empty && snapshot.metadata.fromCache && tareasMap.size > 0) {
+        tareasReady = true;
+        checkReady();
+        return;
+      }
       const nextTareasMap = new Map();
       snapshot.docs.forEach((docSnap) => {
         const data = docSnap.data();
@@ -209,6 +432,7 @@ export function setUserContext(user) {
           fecha_creado: String(data.fecha_creado || new Date().toISOString())
         });
       });
+      applyOfflineQueueOverlay(obrasMap, nextTareasMap);
       tareasMap = nextTareasMap;
       tareasReady = true;
       saveLocalSnapshot();
@@ -229,14 +453,22 @@ export function getCurrentUserId() {
 }
 
 /**
- * Fuerza una sincronización activa con Firestore (ideal al desbloquear tablet/móvil o cambiar de pestaña)
+ * Fuerza una sincronización activa con Firestore vaciando primero cualquier cambio anotado sin cobertura en obra
  */
 export async function forceCloudSync() {
   if (!currentUserId) return;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    notifyOfflineStatus();
+    return;
+  }
   try {
+    // 1. Primero subir cualquier cambio pendiente en la cola local del dispositivo
+    await flushOfflineQueue();
+
+    // 2. Descargar estado actualizado desde Firestore
     const [obrasSnap, tareasSnap] = await Promise.all([
-      getDocs(collection(firestore, 'users', currentUserId, 'obras')),
-      getDocs(collection(firestore, 'users', currentUserId, 'tareas'))
+      withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'obras')), 5000),
+      withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'tareas')), 5000)
     ]);
 
     const nextObrasMap = new Map();
@@ -248,7 +480,6 @@ export async function forceCloudSync() {
         activo: data.activo !== undefined ? Number(data.activo) : 1
       });
     });
-    obrasMap = nextObrasMap;
 
     const nextTareasMap = new Map();
     tareasSnap.forEach((docSnap) => {
@@ -265,28 +496,46 @@ export async function forceCloudSync() {
         fecha_creado: String(data.fecha_creado || new Date().toISOString())
       });
     });
+
+    // Preservar cualquier operación que aún siga en la cola local
+    applyOfflineQueueOverlay(nextObrasMap, nextTareasMap);
+    obrasMap = nextObrasMap;
     tareasMap = nextTareasMap;
 
     saveLocalSnapshot();
     notify(false);
+    notifyOfflineStatus();
   } catch (e) {
-    console.warn('Error en sincronización activa con la nube:', e);
+    console.warn('Error en sincronización activa con la nube (modo sin cobertura activo):', e?.message);
+    notifyOfflineStatus();
   }
 }
 
-// Auto-sincronizar cuando el dispositivo móvil/tablet o navegador recupera foco o conexión
+// Auto-sincronizar cuando el dispositivo móvil/tablet recupera cobertura o foco
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
-    forceCloudSync();
+    notifyOfflineStatus();
+    flushOfflineQueue().then(() => forceCloudSync());
+  });
+  window.addEventListener('offline', () => {
+    notifyOfflineStatus();
   });
   window.addEventListener('focus', () => {
-    forceCloudSync();
-  });
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      forceCloudSync();
+    if (navigator.onLine) {
+      flushOfflineQueue().then(() => forceCloudSync());
     }
   });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && navigator.onLine) {
+      flushOfflineQueue().then(() => forceCloudSync());
+    }
+  });
+  // Reintento periódico automático cada 12 segundos si hay cambios anotados en obra pendientes de cobertura
+  setInterval(() => {
+    if (navigator.onLine && currentUserId && getOfflineQueue(currentUserId).length > 0) {
+      flushOfflineQueue();
+    }
+  }, 12000);
 }
 
 export const db = {
@@ -385,9 +634,12 @@ export const db = {
           nombre: String(nombre),
           activo: activo !== undefined ? Number(activo) : 1
         };
-        await setDoc(doc(firestore, 'users', currentUserId, 'obras', String(id)), obraDoc, { merge: true });
+        // 1. Guardado local instantáneo (0ms) + Cola Offline persistente
         obrasMap.set(String(id), obraDoc);
         saveLocalSnapshot();
+        enqueueOfflineOperation('set_obra', String(id), obraDoc);
+        // 2. Sincronizar en segundo plano sin bloquear si no hay cobertura en obra
+        flushOfflineQueue();
         return { changes: 1 };
       }
 
@@ -412,9 +664,10 @@ export const db = {
           nombre: nuevoNombre,
           activo: nuevoActivo
         };
-        await setDoc(doc(firestore, 'users', currentUserId, 'obras', id), obraDoc, { merge: true });
         obrasMap.set(id, obraDoc);
         saveLocalSnapshot();
+        enqueueOfflineOperation('set_obra', id, obraDoc);
+        flushOfflineQueue();
         return { changes: 1 };
       }
 
@@ -423,39 +676,22 @@ export const db = {
         const [obraId] = params;
         const targetObraId = String(obraId);
         const toDelete = Array.from(tareasMap.values()).filter((t) => t.obra_id === targetObraId);
-        if (toDelete.length > 0) {
-          const batch = writeBatch(firestore);
-          toDelete.forEach((t) => {
-            batch.delete(doc(firestore, 'users', currentUserId, 'tareas', t.id));
-            tareasMap.delete(t.id);
-          });
-          await batch.commit();
-        }
-        try {
-          const q = query(
-            collection(firestore, 'users', currentUserId, 'tareas'),
-            where('obra_id', '==', targetObraId)
-          );
-          const snap = await getDocs(q);
-          if (snap.size > 0) {
-            const batch = writeBatch(firestore);
-            snap.forEach((d) => {
-              batch.delete(d.ref);
-              tareasMap.delete(d.id);
-            });
-            await batch.commit();
-          }
-        } catch (_) {}
+        toDelete.forEach((t) => {
+          tareasMap.delete(t.id);
+          enqueueOfflineOperation('delete_tarea', t.id);
+        });
         saveLocalSnapshot();
+        flushOfflineQueue();
         return { changes: toDelete.length };
       }
 
       // DELETE FROM obras WHERE id = ?
       if (lower.startsWith('delete from obras where id = ?')) {
         const [id] = params;
-        await deleteDoc(doc(firestore, 'users', currentUserId, 'obras', String(id)));
         obrasMap.delete(String(id));
         saveLocalSnapshot();
+        enqueueOfflineOperation('delete_obra', String(id));
+        flushOfflineQueue();
         return { changes: 1 };
       }
 
@@ -473,9 +709,11 @@ export const db = {
           notas: String(notas || ''),
           fecha_creado: String(fecha_creado || new Date().toISOString())
         };
-        await setDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)), tareaDoc, { merge: true });
+        // Guardado local instantáneo (0ms) + Cola Offline persistente para trabajo en obra sin cobertura
         tareasMap.set(String(id), tareaDoc);
         saveLocalSnapshot();
+        enqueueOfflineOperation('set_tarea', String(id), tareaDoc);
+        flushOfflineQueue();
         return { changes: 1 };
       }
 
@@ -505,18 +743,20 @@ export const db = {
           fecha_creado: String(existing.fecha_creado || new Date().toISOString())
         };
 
-        await setDoc(doc(firestore, 'users', currentUserId, 'tareas', id), tareaDoc, { merge: true });
         tareasMap.set(id, tareaDoc);
         saveLocalSnapshot();
+        enqueueOfflineOperation('set_tarea', id, tareaDoc);
+        flushOfflineQueue();
         return { changes: 1 };
       }
 
       // DELETE FROM tareas WHERE id = ?
       if (lower.startsWith('delete from tareas where id = ?')) {
         const [id] = params;
-        await deleteDoc(doc(firestore, 'users', currentUserId, 'tareas', String(id)));
         tareasMap.delete(String(id));
         saveLocalSnapshot();
+        enqueueOfflineOperation('delete_tarea', String(id));
+        flushOfflineQueue();
         return { changes: 1 };
       }
 
@@ -710,10 +950,19 @@ export async function migrateLocalDataToFirestore() {
 
 const STORAGE_SHARED_GREMIOS_KEY = 'enue_shared_gremios';
 
+let gremiosListeners = [];
+
+function notifyGremiosListeners(list) {
+  gremiosListeners.slice().forEach((cb) => {
+    try { cb(list); } catch (e) {}
+  });
+}
+
 /**
- * Suscribe a los gremios/subcontratistas compartidos en Firestore en tiempo real.
+ * Suscribe a los gremios/subcontratistas compartidos en Firestore en tiempo real (con soporte sin cobertura).
  */
 export function subscribeToSharedGremios(callback) {
+  gremiosListeners.push(callback);
   let initial = [];
   try {
     const raw = localStorage.getItem(STORAGE_SHARED_GREMIOS_KEY);
@@ -726,6 +975,7 @@ export function subscribeToSharedGremios(callback) {
 
   const gremiosCol = collection(firestore, 'gremios');
   const unsub = onSnapshot(gremiosCol, (snap) => {
+    if (snap.empty && snap.metadata.fromCache && initial.length > 0) return;
     const list = [];
     snap.forEach((docSnap) => {
       const d = docSnap.data();
@@ -740,23 +990,25 @@ export function subscribeToSharedGremios(callback) {
     try {
       localStorage.setItem(STORAGE_SHARED_GREMIOS_KEY, JSON.stringify(list));
     } catch (e) {}
-    callback(list);
+    notifyGremiosListeners(list);
   }, (err) => {
     console.warn('Error escuchando gremios compartidos:', err);
   });
 
-  return unsub;
+  return () => {
+    gremiosListeners = gremiosListeners.filter((cb) => cb !== callback);
+    unsub();
+  };
 }
 
 /**
- * Añade un nuevo gremio / subcontratista compartido para todos los usuarios.
+ * Añade un nuevo gremio / subcontratista compartido (instantáneo sin cobertura y sincronizado con la nube).
  */
 export async function createSharedGremio(nombre, createdBy = '') {
   const cleanNombre = (nombre || '').trim();
   if (!cleanNombre) {
     throw new Error('El nombre del gremio o subcontratista no puede estar vacío.');
   }
-  // Generar ID seguro
   const id = 'g_' + cleanNombre.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 50) + '_' + Date.now().toString(36);
   const data = {
     id,
@@ -764,15 +1016,40 @@ export async function createSharedGremio(nombre, createdBy = '') {
     creado_por: createdBy || 'Usuario Corporativo',
     fecha_creado: new Date().toISOString()
   };
-  await setDoc(doc(firestore, 'gremios', id), data);
+
+  // Guardado local instantáneo (0ms) por si no hay cobertura en obra
+  try {
+    const raw = localStorage.getItem(STORAGE_SHARED_GREMIOS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    const nextList = [...list.filter(g => g.nombre.toLowerCase() !== cleanNombre.toLowerCase()), data];
+    nextList.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+    localStorage.setItem(STORAGE_SHARED_GREMIOS_KEY, JSON.stringify(nextList));
+    notifyGremiosListeners(nextList);
+  } catch (e) {}
+
+  // Sincronización en segundo plano con Firestore (cuando haya cobertura)
+  setDoc(doc(firestore, 'gremios', id), data).catch((err) => {
+    console.warn('Gremio guardado localmente; se sincronizará al recuperar cobertura:', err?.message);
+  });
+
   return data;
 }
 
 /**
- * Elimina un gremio compartido de Firestore.
+ * Elimina un gremio compartido de Firestore (con soporte offline).
  */
 export async function deleteSharedGremio(id) {
   if (!id) return;
-  await deleteDoc(doc(firestore, 'gremios', String(id)));
+  try {
+    const raw = localStorage.getItem(STORAGE_SHARED_GREMIOS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    const nextList = list.filter(g => String(g.id) !== String(id));
+    localStorage.setItem(STORAGE_SHARED_GREMIOS_KEY, JSON.stringify(nextList));
+    notifyGremiosListeners(nextList);
+  } catch (e) {}
+
+  deleteDoc(doc(firestore, 'gremios', String(id))).catch((err) => {
+    console.warn('Eliminación de gremio pendiente de cobertura:', err?.message);
+  });
 }
 
