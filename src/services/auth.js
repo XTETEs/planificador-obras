@@ -3,15 +3,60 @@ export const CORPORATE_DOMAIN = 'enue.es';
 const STORAGE_ACTIVE_USER_KEY = 'enue_active_user';
 const STORAGE_SAVED_ACCOUNTS_KEY = 'enue_saved_accounts';
 
+// Corrección automática de errores tipográficos frecuentes en teclados móviles/tablets
+const EMAIL_TYPO_ALIASES = {
+  'jteuelo@enue.es': { email: 'jtejuelo@enue.es', displayName: 'Ximo' },
+  'j.tejuelo@enue.es': { email: 'jtejuelo@enue.es', displayName: 'Ximo' },
+  'ximo@enue.es': { email: 'jtejuelo@enue.es', displayName: 'Ximo' }
+};
+
+// Cuentas corporativas registradas en Firestore para acceso rápido en cualquier dispositivo nuevo
+export const DEFAULT_CORPORATE_ACCOUNTS = [
+  { email: 'jtejuelo@enue.es', displayName: 'Ximo' },
+  { email: 'calidad@enue.es', displayName: 'Yara' }
+];
+
 let currentAuthUser = null;
 let authListeners = [];
 
-// Inicializar usuario desde almacenamiento local si existe
+/**
+ * Normaliza un correo corporativo corrigiendo erratas conocidas de teclado móvil/tablet
+ */
+export function normalizeCorporateEmail(email, customName = '') {
+  const raw = (email || '').trim().toLowerCase();
+  if (EMAIL_TYPO_ALIASES[raw]) {
+    return {
+      email: EMAIL_TYPO_ALIASES[raw].email,
+      displayName: customName && customName.trim() && customName.trim().toLowerCase() !== 'jteuelo'
+        ? customName.trim()
+        : EMAIL_TYPO_ALIASES[raw].displayName
+    };
+  }
+  return {
+    email: raw,
+    displayName: customName ? customName.trim() : ''
+  };
+}
+
+// Inicializar usuario desde almacenamiento local si existe (corrigiendo erratas como jteuelo@enue.es)
 if (typeof window !== 'undefined') {
   try {
     const raw = localStorage.getItem(STORAGE_ACTIVE_USER_KEY);
     if (raw) {
-      currentAuthUser = JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.email) {
+        const normalized = normalizeCorporateEmail(parsed.email, parsed.displayName);
+        const fixedUid = getUserIdFromEmail(normalized.email);
+        currentAuthUser = {
+          ...parsed,
+          uid: fixedUid,
+          email: normalized.email,
+          displayName: normalized.displayName || getDisplayNameFromEmail(normalized.email)
+        };
+        if (parsed.email !== normalized.email || parsed.uid !== fixedUid) {
+          localStorage.setItem(STORAGE_ACTIVE_USER_KEY, JSON.stringify(currentAuthUser));
+        }
+      }
     }
   } catch (e) {
     console.warn('Error leyendo usuario activo de localStorage:', e);
@@ -42,7 +87,10 @@ export function isCorporateEmail(email) {
  */
 export function getDisplayNameFromEmail(email) {
   if (!email || typeof email !== 'string') return 'Usuario';
-  const prefix = email.split('@')[0];
+  const clean = email.trim().toLowerCase();
+  const known = DEFAULT_CORPORATE_ACCOUNTS.find(a => a.email === clean);
+  if (known) return known.displayName;
+  const prefix = clean.split('@')[0];
   const parts = prefix.split(/[._-]/).filter(Boolean);
   if (parts.length === 0) return prefix;
   return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ');
@@ -52,15 +100,16 @@ export function getDisplayNameFromEmail(email) {
  * Genera un identificador único determinista y seguro para la partición de datos en Firestore
  */
 export function getUserIdFromEmail(email) {
-  const clean = (email || '').trim().toLowerCase();
-  return 'u_' + clean.replace(/[^a-z0-9]/g, '_');
+  const normalized = normalizeCorporateEmail(email);
+  return 'u_' + normalized.email.replace(/[^a-z0-9]/g, '_');
 }
 
 /**
  * Inicia sesión directa sin contraseña mediante verificación de correo corporativo @enue.es
  */
 export function loginWithCorporateEmail(email, customName = '') {
-  const cleanEmail = (email || '').trim().toLowerCase();
+  const normalized = normalizeCorporateEmail(email, customName);
+  const cleanEmail = normalized.email;
   if (!cleanEmail) {
     throw new Error('Introduce tu correo corporativo.');
   }
@@ -69,8 +118,8 @@ export function loginWithCorporateEmail(email, customName = '') {
     throw new Error(`Acceso denegado: Únicamente se permite el acceso con correo corporativo oficial terminado en @${CORPORATE_DOMAIN}`);
   }
 
-  const displayName = customName && customName.trim()
-    ? customName.trim()
+  const displayName = normalized.displayName
+    ? normalized.displayName
     : getDisplayNameFromEmail(cleanEmail);
 
   const uid = getUserIdFromEmail(cleanEmail);
@@ -90,13 +139,13 @@ export function loginWithCorporateEmail(email, customName = '') {
 
       // Guardar en la lista de cuentas recordadas en este dispositivo
       let accounts = getSavedAccounts();
-      accounts = accounts.filter(a => a.email !== cleanEmail);
+      accounts = accounts.filter(a => a.email !== cleanEmail && a.email !== (email || '').trim().toLowerCase());
       accounts.unshift({
         email: cleanEmail,
         displayName,
         lastUsed: new Date().toISOString()
       });
-      localStorage.setItem(STORAGE_SAVED_ACCOUNTS_KEY, JSON.stringify(accounts.slice(0, 5)));
+      localStorage.setItem(STORAGE_SAVED_ACCOUNTS_KEY, JSON.stringify(accounts.slice(0, 8)));
     } catch (e) {
       console.warn('Error guardando sesión:', e);
     }
@@ -107,16 +156,43 @@ export function loginWithCorporateEmail(email, customName = '') {
 }
 
 /**
- * Obtiene la lista de cuentas corporativas usadas previamente en este navegador
+ * Obtiene la lista de cuentas corporativas disponibles (combinando las usadas en el dispositivo y las corporativas registradas)
  */
 export function getSavedAccounts() {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_SAVED_ACCOUNTS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    return [];
+  let localAccounts = [];
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(STORAGE_SAVED_ACCOUNTS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          localAccounts = parsed.map(acc => {
+            const norm = normalizeCorporateEmail(acc.email, acc.displayName);
+            return {
+              ...acc,
+              email: norm.email,
+              displayName: norm.displayName || getDisplayNameFromEmail(norm.email)
+            };
+          });
+        }
+      }
+    } catch (e) {
+      localAccounts = [];
+    }
   }
+
+  // Combinar sin duplicados con las cuentas corporativas activas para que aparezcan en tablets y móviles nuevos
+  const merged = [...localAccounts];
+  for (const defAcc of DEFAULT_CORPORATE_ACCOUNTS) {
+    if (!merged.some(a => a.email === defAcc.email)) {
+      merged.push({
+        email: defAcc.email,
+        displayName: defAcc.displayName,
+        lastUsed: null
+      });
+    }
+  }
+  return merged;
 }
 
 /**

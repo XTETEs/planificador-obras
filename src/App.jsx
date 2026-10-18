@@ -47,7 +47,7 @@ ExternalLink,
 CheckCheck
 } from 'lucide-react';
 import { doc, setDoc } from 'firebase/firestore';
-import { migrateLocalDataToFirestore, setUserContext, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio, firestore } from './services/db.js';
+import { migrateLocalDataToFirestore, setUserContext, getCurrentUserId, forceCloudSync, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio, firestore } from './services/db.js';
 import { onAuthUserChange, logout, CORPORATE_DOMAIN } from './services/auth.js';
 import { AuthView } from './components/AuthView.jsx';
 // EMBEDDED DATABASES ID
@@ -368,52 +368,77 @@ const [transcript, setTranscript] = useState('');
 const [isParsingSpeech, setIsParsingSpeech] = useState(false);
 const [parsedTasks, setParsedTasks] = useState([]); // Preview of parsed tasks before inserting
 const recognitionRef = useRef(null);
+const hasAutoJumpedWeekRef = useRef(false);
+
 // Fetch list of works and tasks
 const loadData = useCallback(async () => {
-if (!db || !currentUser) return;
-try {
-// Load construction sites
-const obrasRes = await db.query('SELECT * FROM obras ORDER BY nombre ASC');
-setObras(obrasRes.rows || []);
-if (obrasRes.rows && obrasRes.rows.length > 0 && !manualTask.obra_id) {
-setManualTask(prev => ({ ...prev, obra_id: obrasRes.rows[0][0] }));
-}
-// Load all tasks for printing and filter the current week for the weekly grid
-const query = `
-SELECT t.id, t.obra_id, t.fecha_semana, t.dia_semana, t.actividad, t.gremio, t.completada, t.notas, o.nombre as obra_nombre FROM tareas t LEFT JOIN obras o ON t.obra_id = o.id ORDER BY t.fecha_semana ASC, t.fecha_creado ASC
-`;
-const tareasRes = await db.query(query);
-// Map rows into objects
-const mappedTareas = (tareasRes.rows || []).map(row => ({
-id: row[0],
-obra_id: row[1],
-fecha_semana: row[2],
-dia_semana: row[3],
-actividad: row[4],
-gremio: row[5],
-completada: isTaskCompleted(row[6]),
-notas: row[7],
-obra_nombre: row[8] || 'Obra Desconocida'
-}));
-setTodasLasTareas(mappedTareas);
-setTareas(mappedTareas.filter(task => task.fecha_semana === currentWeekMonday));
-} catch (e) {
-setError('Error cargando datos de la base de datos: ' + e.message);
-}
-}, [db, currentUser, currentWeekMonday, manualTask.obra_id]);
+  if (!db || !getCurrentUserId()) return;
+  try {
+    // Load construction sites
+    const obrasRes = await db.query('SELECT * FROM obras ORDER BY nombre ASC');
+    const loadedObras = obrasRes.rows || [];
+    setObras(loadedObras);
+    if (loadedObras.length > 0) {
+      setManualTask(prev => prev.obra_id ? prev : { ...prev, obra_id: loadedObras[0][0] });
+    }
+    // Load all tasks for printing and filter the current week for the weekly grid
+    const query = `
+      SELECT t.id, t.obra_id, t.fecha_semana, t.dia_semana, t.actividad, t.gremio, t.completada, t.notas, o.nombre as obra_nombre FROM tareas t LEFT JOIN obras o ON t.obra_id = o.id ORDER BY t.fecha_semana ASC, t.fecha_creado ASC
+    `;
+    const tareasRes = await db.query(query);
+    // Map rows into objects
+    const mappedTareas = (tareasRes.rows || []).map(row => ({
+      id: row[0],
+      obra_id: row[1],
+      fecha_semana: row[2],
+      dia_semana: row[3],
+      actividad: row[4],
+      gremio: row[5],
+      completada: isTaskCompleted(row[6]),
+      notas: row[7],
+      obra_nombre: row[8] || 'Obra Desconocida'
+    }));
+    setTodasLasTareas(mappedTareas);
+
+    const tasksInCurrentWeek = mappedTareas.filter(task => task.fecha_semana === currentWeekMonday);
+    setTareas(tasksInCurrentWeek);
+
+    // Si el dispositivo entra en una semana vacía pero el usuario sí tiene tareas en otras semanas, saltar automáticamente a la semana con tareas más cercana
+    if (!hasAutoJumpedWeekRef.current && mappedTareas.length > 0) {
+      hasAutoJumpedWeekRef.current = true;
+      if (tasksInCurrentWeek.length === 0) {
+        const availableWeeks = Array.from(new Set(mappedTareas.map(t => t.fecha_semana).filter(Boolean))).sort();
+        if (availableWeeks.length > 0) {
+          // Buscar la semana más cercana a hoy o la primera con tareas pendientes
+          const targetWeek = availableWeeks.find(w => w >= currentWeekMonday) || availableWeeks[availableWeeks.length - 1];
+          if (targetWeek && targetWeek !== currentWeekMonday) {
+            setCurrentWeekMonday(targetWeek);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    setError('Error cargando datos de la base de datos: ' + e.message);
+  }
+}, [db, currentWeekMonday]);
 
 // Escucha de estado de autenticación corporativa
 useEffect(() => {
   const unsubAuth = onAuthUserChange(async (user) => {
     if (user) {
+      hasAutoJumpedWeekRef.current = false;
       setCurrentUser(user);
       try {
         await setUserContext(user);
-        loadData();
+        await loadData();
+        // Forzar comprobación activa contra Firestore para asegurar sincronización entre dispositivos
+        await forceCloudSync();
+        await loadData();
       } catch (err) {
         console.error('Error inicializando contexto de usuario:', err);
       }
     } else {
+      hasAutoJumpedWeekRef.current = false;
       setCurrentUser(null);
       setUserContext(null);
       setObras([]);
@@ -426,6 +451,13 @@ useEffect(() => {
   return () => unsubAuth();
 }, [loadData]);
 
+// Actualizar tareas filtradas cuando cambia la semana activa o el usuario
+useEffect(() => {
+  if (currentUser && getCurrentUserId()) {
+    loadData();
+  }
+}, [currentUser, currentWeekMonday, loadData]);
+
 // Escucha en tiempo real de gremios y subcontratistas compartidos en Firestore
 useEffect(() => {
   const unsubGremios = subscribeToSharedGremios((list) => {
@@ -436,17 +468,17 @@ useEffect(() => {
   };
 }, []);
 
-// Database Sync Event listeners
+// Database Sync Event listeners (suscripción permanente para recibir cambios en tiempo real de otros dispositivos)
 useEffect(() => {
-if (!db || !currentUser) return;
-const unsubscribe = db.onPendingChange((hasPending) => {
-setSyncing(hasPending);
-if (!hasPending) {
-loadData(); // Reload safely when synched
-}
-});
-return () => unsubscribe();
-}, [db, currentUser, loadData]);
+  if (!db) return;
+  const unsubscribe = db.onPendingChange((hasPending) => {
+    setSyncing(hasPending);
+    if (!hasPending && getCurrentUserId()) {
+      loadData(); // Reload safely when synched
+    }
+  });
+  return () => unsubscribe();
+}, [db, loadData]);
 
 // Limpieza de base de datos SQLite local en IndexedDB para evitar que reaparezcan obras de prueba
 useEffect(() => {
@@ -538,6 +570,18 @@ const taskCountByWeek = useMemo(() => {
   });
   return map;
 }, [todasLasTareas]);
+
+const weeksWithTasksForObra = useMemo(() => {
+  const map = {};
+  todasLasTareas.forEach(t => {
+    if (!t.fecha_semana) return;
+    if (selectedObraId !== 'all' && String(t.obra_id) !== String(selectedObraId)) return;
+    map[t.fecha_semana] = (map[t.fecha_semana] || 0) + 1;
+  });
+  return Object.entries(map)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([week, count]) => ({ week, count }));
+}, [todasLasTareas, selectedObraId]);
 
 const todayIsoString = useMemo(() => {
   const d = new Date();
@@ -1788,7 +1832,8 @@ if (!currentUser) {
       onAuthSuccess={async (user) => {
         setCurrentUser(user);
         await setUserContext(user);
-        loadData();
+        await forceCloudSync();
+        await loadData();
       }}
     />
   );
@@ -1808,13 +1853,30 @@ return (
 <div className="min-w-0">
 <h1 className="text-base sm:text-xl md:text-2xl font-bold text-slate-950 flex flex-wrap items-center gap-2 leading-tight">
 <span className="truncate sm:whitespace-normal">Planificador Semanal / Repasos</span>
-{syncing && (
+{syncing ? (
 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200 animate-pulse">
-<RefreshCw className="w-3 h-3 mr-1 animate-spin" /> Guardando...
+<RefreshCw className="w-3 h-3 mr-1 animate-spin" /> Sincronizando...
 </span>
+) : (
+<button
+  type="button"
+  onClick={async () => {
+    setSyncing(true);
+    await forceCloudSync();
+    await loadData();
+    setSyncing(false);
+    setSuccessMessage(`Sincronizado en tiempo real con la nube (${todasLasTareas.length} tareas y ${obras.length} obras en ${currentUser.email}).`);
+    setTimeout(() => setSuccessMessage(null), 3500);
+  }}
+  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors cursor-pointer"
+  title="Haz clic para forzar sincronización inmediata con todos tus dispositivos"
+>
+  <RefreshCw className="w-2.5 h-2.5 text-emerald-600" />
+  <span>Sincronizado ({todasLasTareas.length})</span>
+</button>
 )}
 </h1>
-<p className="text-xs sm:text-sm text-slate-500 truncate">ENUE Proyectos y Construcción</p>
+<p className="text-xs sm:text-sm text-slate-500 truncate">ENUE Proyectos y Construcción · {currentUser.email}</p>
 </div>
 </div>
 
@@ -1997,7 +2059,7 @@ className="bg-slate-900 hover:bg-slate-800 text-white hover:cursor-pointer font-
 )}
 
 {/* Control Bar & Progress */}
-<div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 mb-5 sm:mb-8">
+<div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 mb-4 sm:mb-5">
 {/* Selector de Obra y Semana */}
 <div className="lg:col-span-8 flex flex-col md:flex-row gap-3.5 sm:gap-4 items-stretch md:items-center bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200">
 {/* Obras Select */}
@@ -2006,13 +2068,32 @@ className="bg-slate-900 hover:bg-slate-800 text-white hover:cursor-pointer font-
 <div className="flex gap-2">
 <select
 value={selectedObraId}
-onChange={(e) => setSelectedObraId(e.target.value)}
+onChange={(e) => {
+  const nextObraId = e.target.value;
+  setSelectedObraId(nextObraId);
+  if (nextObraId !== 'all') {
+    const tasksForObraInCurrentWeek = todasLasTareas.filter(
+      t => String(t.obra_id) === String(nextObraId) && t.fecha_semana === currentWeekMonday
+    );
+    if (tasksForObraInCurrentWeek.length === 0) {
+      const weeksForObra = Array.from(
+        new Set(todasLasTareas.filter(t => String(t.obra_id) === String(nextObraId)).map(t => t.fecha_semana).filter(Boolean))
+      ).sort();
+      if (weeksForObra.length > 0) {
+        setCurrentWeekMonday(weeksForObra[0]);
+      }
+    }
+  }
+}}
 className="w-full min-w-0 bg-slate-50 border border-slate-200 rounded-lg px-2.5 sm:px-3 py-2 text-xs sm:text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500"
 >
-<option value="all">📍 Todas las obras activas</option>
-{obras.map(o => (
-<option key={o[0]} value={o[0]}>🚧 {o[1]}</option>
-))}
+<option value="all">📍 Todas las obras activas ({todasLasTareas.length} tareas)</option>
+{obras.map(o => {
+  const countObra = todasLasTareas.filter(t => String(t.obra_id) === String(o[0])).length;
+  return (
+    <option key={o[0]} value={o[0]}>🚧 {o[1]} ({countObra})</option>
+  );
+})}
 </select>
 <button
 type="button"
@@ -2092,6 +2173,39 @@ Hoy
 </div>
 </div>
 </div>
+
+{/* Barra Rápida de Semanas con Tareas Registradas (Salto directo entre semanas con actividad) */}
+{weeksWithTasksForObra.length > 0 && (
+  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar bg-white border border-slate-200 rounded-xl px-3 py-2 mb-4 shadow-2xs">
+    <span className="text-[10px] sm:text-[11px] font-extrabold uppercase tracking-wider text-slate-400 shrink-0 flex items-center gap-1 mr-1">
+      <CalendarDays className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+      <span>Semanas con tareas:</span>
+    </span>
+    {weeksWithTasksForObra.map(({ week, count }) => {
+      const isCurrent = week === currentWeekMonday;
+      return (
+        <button
+          key={week}
+          type="button"
+          onClick={() => setCurrentWeekMonday(week)}
+          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 flex items-center gap-1.5 transition-all cursor-pointer border ${
+            isCurrent
+              ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-2xs font-extrabold'
+              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-amber-50 hover:border-amber-300'
+          }`}
+          title={`Saltar a la semana del lunes ${formatFriendlyDate(week)} (${count} tareas)`}
+        >
+          <span>{formatFriendlyDate(week)}</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+            isCurrent ? 'bg-slate-950 text-amber-400' : 'bg-slate-200 text-slate-700'
+          }`}>
+            {count}
+          </span>
+        </button>
+      );
+    })}
+  </div>
+)}
 
 {/* Barra Rápida de Selección de Día para Móviles y Tablets (< xl) */}
 <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-2 mb-4 xl:hidden">

@@ -126,7 +126,7 @@ export function AuthView({ onAuthSuccess }) {
               <div className="flex items-center justify-between text-xs text-slate-400">
                 <span className="font-semibold flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5 text-amber-400" />
-                  Cuentas recientes en este dispositivo:
+                  Selecciona tu cuenta corporativa (@{CORPORATE_DOMAIN}):
                 </span>
               </div>
 

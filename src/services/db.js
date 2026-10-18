@@ -168,21 +168,19 @@ export function setUserContext(user) {
       }
     }
 
-    // Escucha en tiempo real de 'obras' para el usuario actual
+    // Escucha en tiempo real de 'obras' para el usuario actual (reconstrucción completa para evitar desincronización de caché)
     const obrasCol = collection(firestore, 'users', currentUserId, 'obras');
-    unsubObras = onSnapshot(obrasCol, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        const data = change.doc.data();
-        if (change.type === 'removed') {
-          obrasMap.delete(change.doc.id);
-        } else {
-          obrasMap.set(change.doc.id, {
-            id: change.doc.id,
-            nombre: data.nombre || '',
-            activo: data.activo !== undefined ? Number(data.activo) : 1
-          });
-        }
+    unsubObras = onSnapshot(obrasCol, { includeMetadataChanges: true }, (snapshot) => {
+      const nextObrasMap = new Map();
+      snapshot.docs.forEach((docSnap) => {
+        const data = docSnap.data();
+        nextObrasMap.set(docSnap.id, {
+          id: docSnap.id,
+          nombre: data.nombre || '',
+          activo: data.activo !== undefined ? Number(data.activo) : 1
+        });
       });
+      obrasMap = nextObrasMap;
       obrasReady = true;
       saveLocalSnapshot();
       checkReady();
@@ -193,27 +191,25 @@ export function setUserContext(user) {
       checkReady();
     });
 
-    // Escucha en tiempo real de 'tareas' para el usuario actual
+    // Escucha en tiempo real de 'tareas' para el usuario actual (reconstrucción completa para evitar desincronización de caché)
     const tareasCol = collection(firestore, 'users', currentUserId, 'tareas');
-    unsubTareas = onSnapshot(tareasCol, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        const data = change.doc.data();
-        if (change.type === 'removed') {
-          tareasMap.delete(change.doc.id);
-        } else {
-          tareasMap.set(change.doc.id, {
-            id: change.doc.id,
-            obra_id: String(data.obra_id || ''),
-            fecha_semana: String(data.fecha_semana || ''),
-            dia_semana: String(data.dia_semana || ''),
-            actividad: String(data.actividad || ''),
-            gremio: String(data.gremio || 'Otros'),
-            completada: data.completada !== undefined ? Number(data.completada) : 0,
-            notas: String(data.notas || ''),
-            fecha_creado: String(data.fecha_creado || new Date().toISOString())
-          });
-        }
+    unsubTareas = onSnapshot(tareasCol, { includeMetadataChanges: true }, (snapshot) => {
+      const nextTareasMap = new Map();
+      snapshot.docs.forEach((docSnap) => {
+        const data = docSnap.data();
+        nextTareasMap.set(docSnap.id, {
+          id: docSnap.id,
+          obra_id: String(data.obra_id || ''),
+          fecha_semana: String(data.fecha_semana || ''),
+          dia_semana: String(data.dia_semana || ''),
+          actividad: String(data.actividad || ''),
+          gremio: String(data.gremio || 'Otros'),
+          completada: data.completada !== undefined ? Number(data.completada) : 0,
+          notas: String(data.notas || ''),
+          fecha_creado: String(data.fecha_creado || new Date().toISOString())
+        });
       });
+      tareasMap = nextTareasMap;
       tareasReady = true;
       saveLocalSnapshot();
       checkReady();
@@ -230,6 +226,67 @@ export function setUserContext(user) {
 
 export function getCurrentUserId() {
   return currentUserId;
+}
+
+/**
+ * Fuerza una sincronización activa con Firestore (ideal al desbloquear tablet/móvil o cambiar de pestaña)
+ */
+export async function forceCloudSync() {
+  if (!currentUserId) return;
+  try {
+    const [obrasSnap, tareasSnap] = await Promise.all([
+      getDocs(collection(firestore, 'users', currentUserId, 'obras')),
+      getDocs(collection(firestore, 'users', currentUserId, 'tareas'))
+    ]);
+
+    const nextObrasMap = new Map();
+    obrasSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      nextObrasMap.set(docSnap.id, {
+        id: docSnap.id,
+        nombre: data.nombre || '',
+        activo: data.activo !== undefined ? Number(data.activo) : 1
+      });
+    });
+    obrasMap = nextObrasMap;
+
+    const nextTareasMap = new Map();
+    tareasSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      nextTareasMap.set(docSnap.id, {
+        id: docSnap.id,
+        obra_id: String(data.obra_id || ''),
+        fecha_semana: String(data.fecha_semana || ''),
+        dia_semana: String(data.dia_semana || ''),
+        actividad: String(data.actividad || ''),
+        gremio: String(data.gremio || 'Otros'),
+        completada: data.completada !== undefined ? Number(data.completada) : 0,
+        notas: String(data.notas || ''),
+        fecha_creado: String(data.fecha_creado || new Date().toISOString())
+      });
+    });
+    tareasMap = nextTareasMap;
+
+    saveLocalSnapshot();
+    notify(false);
+  } catch (e) {
+    console.warn('Error en sincronización activa con la nube:', e);
+  }
+}
+
+// Auto-sincronizar cuando el dispositivo móvil/tablet o navegador recupera foco o conexión
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    forceCloudSync();
+  });
+  window.addEventListener('focus', () => {
+    forceCloudSync();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      forceCloudSync();
+    }
+  });
 }
 
 export const db = {
@@ -476,7 +533,7 @@ export const db = {
   },
 
   refresh() {
-    return Promise.resolve();
+    return forceCloudSync();
   },
 
   stopLive() {},
