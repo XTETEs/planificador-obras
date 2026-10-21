@@ -109,8 +109,10 @@ export function NotasView({
 
       recognition.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
-        if (transcript) {
-          setNewText(prev => (prev ? `${prev} ${transcript}` : transcript));
+        if (transcript && inputRef.current) {
+          const currentVal = inputRef.current.value;
+          inputRef.current.value = currentVal ? `${currentVal} ${transcript}` : transcript;
+          inputRef.current.selectionStart = inputRef.current.selectionEnd = inputRef.current.value.length;
         }
         setIsDictating(false);
       };
@@ -142,7 +144,7 @@ export function NotasView({
   // Manejo de creación rápida
   const handleQuickAdd = (e) => {
     if (e) e.preventDefault();
-    const clean = newText.trim();
+    const clean = (inputRef.current ? inputRef.current.value : '').trim();
     if (!clean) {
       inputRef.current?.focus();
       return;
@@ -157,7 +159,9 @@ export function NotasView({
       trazo_data: null
     });
 
-    setNewText('');
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
     setNewPrioridad('normal');
     setNewObraId('');
   };
@@ -512,10 +516,13 @@ export function NotasView({
               <input
                 ref={inputRef}
                 type="text"
-                value={newText}
-                onChange={(e) => setNewText(e.target.value)}
+                defaultValue=""
+                dir="ltr"
+                autoCapitalize="sentences"
+                autoComplete="off"
+                spellCheck="true"
                 placeholder="Escribe un apunte o tarea (puedes escribir directamente con el lápiz táctil)..."
-                className="w-full pl-4 pr-12 py-3 bg-slate-50/80 hover:bg-slate-50 focus:bg-white border border-slate-200 rounded-2xl text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500 transition-all"
+                className="w-full pl-4 pr-12 py-3 bg-slate-50/80 hover:bg-slate-50 focus:bg-white border border-slate-200 rounded-2xl text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500 transition-all text-left"
               />
               {/* Botón de Dictado por Voz */}
               <button
@@ -779,9 +786,10 @@ export function NotasView({
                       <div className="flex items-center gap-2">
                         <input
                           type="text"
+                          dir="ltr"
                           value={editingText}
                           onChange={(e) => setEditingText(e.target.value)}
-                          className="flex-1 px-3 py-1.5 text-xs sm:text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-amber-500 font-medium"
+                          className="flex-1 px-3 py-1.5 text-xs sm:text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-amber-500 font-medium text-left"
                           autoFocus
                         />
                         <button
