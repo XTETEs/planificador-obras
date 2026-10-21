@@ -29,6 +29,19 @@ rules_version = '2';
 //   - notas: string (optional, 0-2000 chars)
 //   - fecha_creado: string (required, ISO 8601 string, immutable)
 //
+// Collection: /users/{userId}/notas
+// Document ID: notaId (string)
+// Fields:
+//   - id: string (required, 1-100 chars, must match document ID, immutable)
+//   - texto: string | null (optional, 0-5000 chars)
+//   - completada: bool | number (required, 0, 1, false, or true)
+//   - fecha_creacion: string (required, ISO 8601 string, immutable)
+//   - fecha_completada: string | null (optional, ISO 8601 string if present)
+//   - tipo: string (required, 'texto' | 'trazo')
+//   - trazo_data: string | null (optional, max 600000 chars)
+//   - prioridad: string | null (optional, 'normal' | 'urgente' | 'repaso')
+//   - obra_id: string | null (optional, 0-100 chars)
+//
 // Collection: /users/{userId}
 // Document ID: userId (string, e.g. 'u_nombre_apellido_enue_es')
 //
@@ -64,6 +77,43 @@ service cloud.firestore {
     function isValidOptionalNotas(data) {
       return !('notas' in data) ||
         (data.notas is string && data.notas.size() <= 2000);
+    }
+
+    function isValidOptionalTexto(data) {
+      return !('texto' in data) ||
+        data.texto == null ||
+        (data.texto is string && data.texto.size() <= 5000);
+    }
+
+    function isValidOptionalFechaCompletada(data) {
+      return !('fecha_completada' in data) ||
+        data.fecha_completada == null ||
+        (data.fecha_completada is string &&
+          data.fecha_completada.size() >= 10 &&
+          data.fecha_completada.size() <= 50 &&
+          data.fecha_completada.matches('^\\d{4}-\\d{2}-\\d{2}T.*'));
+    }
+
+    function isValidTipoNota(tipo) {
+      return tipo is string && tipo in ['texto', 'trazo'];
+    }
+
+    function isValidOptionalTrazoData(data) {
+      return !('trazo_data' in data) ||
+        data.trazo_data == null ||
+        (data.trazo_data is string && data.trazo_data.size() <= 600000);
+    }
+
+    function isValidOptionalPrioridad(data) {
+      return !('prioridad' in data) ||
+        data.prioridad == null ||
+        (data.prioridad is string && data.prioridad in ['normal', 'urgente', 'repaso']);
+    }
+
+    function isValidOptionalObraId(data) {
+      return !('obra_id' in data) ||
+        data.obra_id == null ||
+        (data.obra_id is string && data.obra_id.size() <= 100);
     }
 
     // ===============================================================
@@ -109,6 +159,26 @@ service cloud.firestore {
         data.fecha_creado.size() >= 10 &&
         data.fecha_creado.size() <= 50 &&
         data.fecha_creado.matches('^\\d{4}-\\d{2}-\\d{2}T.*');
+    }
+
+    function isValidNota(data, notaId) {
+      return data.keys().hasAll(['id', 'completada', 'fecha_creacion', 'tipo']) &&
+        data.keys().hasOnly(['id', 'completada', 'fecha_creacion', 'tipo', 'texto', 'fecha_completada', 'trazo_data', 'prioridad', 'obra_id']) &&
+        data.id is string &&
+        data.id.size() > 0 &&
+        data.id.size() <= 100 &&
+        data.id == notaId &&
+        isValidFlag(data.completada) &&
+        data.fecha_creacion is string &&
+        data.fecha_creacion.size() >= 10 &&
+        data.fecha_creacion.size() <= 50 &&
+        data.fecha_creacion.matches('^\\d{4}-\\d{2}-\\d{2}T.*') &&
+        isValidTipoNota(data.tipo) &&
+        isValidOptionalTexto(data) &&
+        isValidOptionalFechaCompletada(data) &&
+        isValidOptionalTrazoData(data) &&
+        isValidOptionalPrioridad(data) &&
+        isValidOptionalObraId(data);
     }
 
     // ===============================================================
@@ -165,6 +235,18 @@ service cloud.firestore {
           isValidTarea(request.resource.data, tareaId) &&
           request.resource.data.id == resource.data.id &&
           request.resource.data.fecha_creado == resource.data.fecha_creado;
+      }
+
+      match /notas/{notaId} {
+        allow read, delete: if isValidUserId(userId);
+
+        allow create: if isValidUserId(userId) &&
+          isValidNota(request.resource.data, notaId);
+
+        allow update: if isValidUserId(userId) &&
+          isValidNota(request.resource.data, notaId) &&
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.fecha_creacion == resource.data.fecha_creacion;
       }
     }
   }

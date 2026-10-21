@@ -49,10 +49,12 @@ export const firestore = (() => {
 let currentUserId = null;
 let unsubObras = null;
 let unsubTareas = null;
+let unsubNotas = null;
 
-// Caché en memoria para las obras y tareas de la sesión activa del usuario
+// Caché en memoria para las obras, tareas y notas de la sesión activa del usuario
 let obrasMap = new Map();
 let tareasMap = new Map();
+let notasMap = new Map();
 let isInitialized = false;
 let initPromise = null;
 
@@ -102,7 +104,7 @@ function saveOfflineQueue(queue, uid = currentUserId, extraEvent = null) {
 function enqueueOfflineOperation(type, docId, data = null) {
   if (!currentUserId || typeof window === 'undefined') return;
   const queue = getOfflineQueue(currentUserId);
-  const category = type.includes('obra') ? 'obra' : 'tarea';
+  const category = type.includes('obra') ? 'obra' : (type.includes('nota') ? 'nota' : 'tarea');
   // Si ya había una operación pendiente sobre el mismo documento, actualizarla con el último estado
   const filtered = queue.filter(item => !(item.category === category && String(item.docId) === String(docId)));
   filtered.push({
@@ -120,7 +122,7 @@ function enqueueOfflineOperation(type, docId, data = null) {
  * Aplica las operaciones locales pendientes encima de cualquier instantánea recibida de la nube
  * para garantizar que ningún dato anotado sin cobertura desaparezca antes de sincronizarse.
  */
-function applyOfflineQueueOverlay(targetObrasMap, targetTareasMap) {
+function applyOfflineQueueOverlay(targetObrasMap, targetTareasMap, targetNotasMap = null) {
   const queue = getOfflineQueue(currentUserId);
   if (!queue.length) return;
   for (const op of queue) {
@@ -132,6 +134,10 @@ function applyOfflineQueueOverlay(targetObrasMap, targetTareasMap) {
       targetTareasMap.set(String(op.docId), op.data);
     } else if (op.type === 'delete_tarea') {
       targetTareasMap.delete(String(op.docId));
+    } else if (op.type === 'set_nota' && op.data && targetNotasMap) {
+      targetNotasMap.set(String(op.docId), op.data);
+    } else if (op.type === 'delete_nota' && targetNotasMap) {
+      targetNotasMap.delete(String(op.docId));
     }
   }
 }
@@ -236,6 +242,14 @@ export async function flushOfflineQueue() {
           await withNetworkTimeout(
             deleteDoc(doc(firestore, 'users', uidAtStart, 'tareas', String(op.docId)))
           );
+        } else if (op.type === 'set_nota' && op.data) {
+          await withNetworkTimeout(
+            setDoc(doc(firestore, 'users', uidAtStart, 'notas', String(op.docId)), op.data, { merge: true })
+          );
+        } else if (op.type === 'delete_nota') {
+          await withNetworkTimeout(
+            deleteDoc(doc(firestore, 'users', uidAtStart, 'notas', String(op.docId)))
+          );
         }
 
         // Operación confirmada en la nube: eliminarla de la cola local
@@ -272,12 +286,13 @@ function saveLocalSnapshot() {
   try {
     localStorage.setItem(`enue_cache_${currentUserId}_obras`, JSON.stringify(Array.from(obrasMap.values())));
     localStorage.setItem(`enue_cache_${currentUserId}_tareas`, JSON.stringify(Array.from(tareasMap.values())));
+    localStorage.setItem(`enue_cache_${currentUserId}_notas`, JSON.stringify(Array.from(notasMap.values())));
   } catch (e) {}
 }
 
 /**
  * Conecta la base de datos a la sesión del usuario corporativo autenticado.
- * Aísla 100% las obras y tareas bajo /users/{uid}/obras y /users/{uid}/tareas
+ * Aísla 100% las obras, tareas y notas bajo /users/{uid}/obras, /users/{uid}/tareas y /users/{uid}/notas
  */
 export function setUserContext(user) {
   const newUserId = user ? user.uid : null;
@@ -295,9 +310,14 @@ export function setUserContext(user) {
     unsubTareas();
     unsubTareas = null;
   }
+  if (unsubNotas) {
+    unsubNotas();
+    unsubNotas = null;
+  }
 
   obrasMap.clear();
   tareasMap.clear();
+  notasMap.clear();
   currentUserId = newUserId;
   isInitialized = false;
 
@@ -329,8 +349,17 @@ export function setUserContext(user) {
           });
         }
       }
+      const rawNotas = localStorage.getItem(`enue_cache_${currentUserId}_notas`);
+      if (rawNotas) {
+        const parsedNotas = JSON.parse(rawNotas);
+        if (Array.isArray(parsedNotas)) {
+          parsedNotas.forEach((n) => {
+            if (n && n.id) notasMap.set(String(n.id), n);
+          });
+        }
+      }
       // Superponer cualquier operación guardada sin cobertura en el dispositivo
-      applyOfflineQueueOverlay(obrasMap, tareasMap);
+      applyOfflineQueueOverlay(obrasMap, tareasMap, notasMap);
     } catch (e) {
       console.warn('Error leyendo caché local instantánea:', e);
     }
@@ -341,6 +370,7 @@ export function setUserContext(user) {
   initPromise = new Promise((resolve) => {
     let obrasReady = false;
     let tareasReady = false;
+    let notasReady = false;
 
     // Si estamos sin cobertura y ya tenemos datos en caché local, resolver de inmediato sin bloquear la pantalla
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -350,7 +380,7 @@ export function setUserContext(user) {
     }
 
     async function checkReady() {
-      if (obrasReady && tareasReady && !isInitialized) {
+      if (obrasReady && tareasReady && notasReady && !isInitialized) {
         isInitialized = true;
         saveLocalSnapshot();
         resolve();
@@ -397,7 +427,7 @@ export function setUserContext(user) {
           activo: data.activo !== undefined ? Number(data.activo) : 1
         });
       });
-      applyOfflineQueueOverlay(nextObrasMap, tareasMap);
+      applyOfflineQueueOverlay(nextObrasMap, tareasMap, notasMap);
       obrasMap = nextObrasMap;
       obrasReady = true;
       saveLocalSnapshot();
@@ -432,7 +462,7 @@ export function setUserContext(user) {
           fecha_creado: String(data.fecha_creado || new Date().toISOString())
         });
       });
-      applyOfflineQueueOverlay(obrasMap, nextTareasMap);
+      applyOfflineQueueOverlay(obrasMap, nextTareasMap, notasMap);
       tareasMap = nextTareasMap;
       tareasReady = true;
       saveLocalSnapshot();
@@ -441,6 +471,41 @@ export function setUserContext(user) {
     }, (error) => {
       console.error('Firestore tareas usuario error:', error);
       tareasReady = true;
+      checkReady();
+    });
+
+    // Escucha en tiempo real de 'notas' para el usuario actual (reconstrucción completa + protección de cola offline)
+    const notasCol = collection(firestore, 'users', currentUserId, 'notas');
+    unsubNotas = onSnapshot(notasCol, { includeMetadataChanges: true }, (snapshot) => {
+      if (snapshot.empty && snapshot.metadata.fromCache && notasMap.size > 0) {
+        notasReady = true;
+        checkReady();
+        return;
+      }
+      const nextNotasMap = new Map();
+      snapshot.docs.forEach((docSnap) => {
+        const data = docSnap.data();
+        nextNotasMap.set(docSnap.id, {
+          id: docSnap.id,
+          tipo: data.tipo === 'trazo' ? 'trazo' : 'texto',
+          completada: data.completada !== undefined ? (Number(data.completada) || 0) : 0,
+          fecha_creacion: String(data.fecha_creacion || new Date().toISOString()),
+          fecha_completada: data.fecha_completada ? String(data.fecha_completada) : null,
+          texto: data.texto !== undefined && data.texto !== null ? String(data.texto) : '',
+          trazo_data: data.trazo_data ? String(data.trazo_data) : null,
+          prioridad: data.prioridad || 'normal',
+          obra_id: data.obra_id ? String(data.obra_id) : null
+        });
+      });
+      applyOfflineQueueOverlay(obrasMap, tareasMap, nextNotasMap);
+      notasMap = nextNotasMap;
+      notasReady = true;
+      saveLocalSnapshot();
+      checkReady();
+      if (isInitialized) notify(false);
+    }, (error) => {
+      console.error('Firestore notas usuario error:', error);
+      notasReady = true;
       checkReady();
     });
   });
@@ -466,9 +531,10 @@ export async function forceCloudSync() {
     await flushOfflineQueue();
 
     // 2. Descargar estado actualizado desde Firestore
-    const [obrasSnap, tareasSnap] = await Promise.all([
+    const [obrasSnap, tareasSnap, notasSnap] = await Promise.all([
       withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'obras')), 5000),
-      withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'tareas')), 5000)
+      withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'tareas')), 5000),
+      withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'notas')), 5000)
     ]);
 
     const nextObrasMap = new Map();
@@ -497,10 +563,27 @@ export async function forceCloudSync() {
       });
     });
 
+    const nextNotasMap = new Map();
+    notasSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      nextNotasMap.set(docSnap.id, {
+        id: docSnap.id,
+        tipo: data.tipo === 'trazo' ? 'trazo' : 'texto',
+        completada: data.completada !== undefined ? (Number(data.completada) || 0) : 0,
+        fecha_creacion: String(data.fecha_creacion || new Date().toISOString()),
+        fecha_completada: data.fecha_completada ? String(data.fecha_completada) : null,
+        texto: data.texto !== undefined && data.texto !== null ? String(data.texto) : '',
+        trazo_data: data.trazo_data ? String(data.trazo_data) : null,
+        prioridad: data.prioridad || 'normal',
+        obra_id: data.obra_id ? String(data.obra_id) : null
+      });
+    });
+
     // Preservar cualquier operación que aún siga en la cola local
-    applyOfflineQueueOverlay(nextObrasMap, nextTareasMap);
+    applyOfflineQueueOverlay(nextObrasMap, nextTareasMap, nextNotasMap);
     obrasMap = nextObrasMap;
     tareasMap = nextTareasMap;
+    notasMap = nextNotasMap;
 
     saveLocalSnapshot();
     notify(false);
@@ -1052,4 +1135,87 @@ export async function deleteSharedGremio(id) {
     console.warn('Eliminación de gremio pendiente de cobertura:', err?.message);
   });
 }
+
+/**
+ * ===============================================================
+ * GESTIÓN DE BLOC DE NOTAS & CHECKLIST (OFFLINE + FIRESTORE SYNC)
+ * ===============================================================
+ */
+
+export function getNotas() {
+  return Array.from(notasMap.values()).sort((a, b) => {
+    return (b.fecha_creacion || '').localeCompare(a.fecha_creacion || '');
+  });
+}
+
+export async function saveNota(nota) {
+  if (!currentUserId) {
+    throw new Error('Debes iniciar sesión con tu cuenta corporativa para guardar notas.');
+  }
+
+  const id = String(nota.id || `n_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
+  
+  // Limpiar y conformar estrictamente al esquema validado por Firestore Rules
+  const cleanDoc = {
+    id,
+    tipo: nota.tipo === 'trazo' ? 'trazo' : 'texto',
+    completada: nota.completada ? 1 : 0,
+    fecha_creacion: String(nota.fecha_creacion || new Date().toISOString())
+  };
+
+  if (nota.texto !== undefined && nota.texto !== null) {
+    cleanDoc.texto = String(nota.texto).slice(0, 5000);
+  }
+  if (nota.fecha_completada) {
+    cleanDoc.fecha_completada = String(nota.fecha_completada);
+  }
+  if (nota.trazo_data) {
+    cleanDoc.trazo_data = String(nota.trazo_data).slice(0, 600000);
+  }
+  if (nota.prioridad && ['normal', 'urgente', 'repaso'].includes(nota.prioridad)) {
+    cleanDoc.prioridad = nota.prioridad;
+  }
+  if (nota.obra_id) {
+    cleanDoc.obra_id = String(nota.obra_id).slice(0, 100);
+  }
+
+  // 1. Guardado local instantáneo (0ms)
+  notasMap.set(id, cleanDoc);
+  saveLocalSnapshot();
+  enqueueOfflineOperation('set_nota', id, cleanDoc);
+
+  // 2. Sincronización en la nube en segundo plano
+  flushOfflineQueue();
+  notify(false);
+
+  return cleanDoc;
+}
+
+export async function updateNota(id, updates) {
+  if (!currentUserId) {
+    throw new Error('Debes iniciar sesión para actualizar notas.');
+  }
+  const strId = String(id);
+  const existing = notasMap.get(strId) || {};
+  const merged = { ...existing, ...updates, id: strId };
+  // Preservar fecha de creación original obligatoriamente
+  if (existing.fecha_creacion) {
+    merged.fecha_creacion = existing.fecha_creacion;
+  }
+  return saveNota(merged);
+}
+
+export async function deleteNota(id) {
+  if (!currentUserId) {
+    throw new Error('Debes iniciar sesión para eliminar notas.');
+  }
+  const strId = String(id);
+  notasMap.delete(strId);
+  saveLocalSnapshot();
+  enqueueOfflineOperation('delete_nota', strId);
+  flushOfflineQueue();
+  notify(false);
+  return { changes: 1 };
+}
+
 

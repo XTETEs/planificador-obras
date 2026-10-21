@@ -47,12 +47,14 @@ ExternalLink,
 CheckCheck,
 Wifi,
 WifiOff,
-CloudUpload
+CloudUpload,
+NotebookPen
 } from 'lucide-react';
 import { doc, setDoc } from 'firebase/firestore';
-import { migrateLocalDataToFirestore, setUserContext, getCurrentUserId, forceCloudSync, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio, subscribeToOfflineStatus, flushOfflineQueue, firestore } from './services/db.js';
+import { migrateLocalDataToFirestore, setUserContext, getCurrentUserId, forceCloudSync, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio, subscribeToOfflineStatus, flushOfflineQueue, firestore, getNotas, saveNota, updateNota, deleteNota } from './services/db.js';
 import { onAuthUserChange, logout, CORPORATE_DOMAIN } from './services/auth.js';
 import { AuthView } from './components/AuthView.jsx';
+import { NotasView } from './components/NotasView.jsx';
 // EMBEDDED DATABASES ID
 const DB_ID = '6a548f958d05750f33c2b531';
 const DIAS_SEMANA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
@@ -252,8 +254,12 @@ const [tareas, setTareas] = useState([]);
 const [todasLasTareas, setTodasLasTareas] = useState([]);
 const [selectedObraId, setSelectedObraId] = useState('all');
 const [currentWeekMonday, setCurrentWeekMonday] = useState(() => getMonday(new Date()));
-// Vistas principales: 'semanal' o 'mensual'
+// Vistas principales: 'semanal', 'mensual' o 'notas'
 const [activeView, setActiveView] = useState('semanal');
+const [notasList, setNotasList] = useState([]);
+const pendingNotasCount = useMemo(() => {
+  return notasList.filter(n => !n.completada).length;
+}, [notasList]);
 const [mobileSelectedDay, setMobileSelectedDay] = useState('all'); // 'all' o día específico en móvil/tablet
 const [mobileReportTab, setMobileReportTab] = useState('preview'); // 'preview' | 'filters' en móvil
 // Cuadrante Mensual: submodo 'matriz' o 'calendario'
@@ -410,6 +416,9 @@ const loadData = useCallback(async () => {
 
     const tasksInCurrentWeek = mappedTareas.filter(task => task.fecha_semana === currentWeekMonday);
     setTareas(tasksInCurrentWeek);
+
+    // Cargar notas y apuntes del bloc
+    setNotasList(getNotas());
 
     // Si el dispositivo entra en una semana vacía pero el usuario sí tiene tareas en otras semanas, saltar automáticamente a la semana con tareas más cercana
     if (!hasAutoJumpedWeekRef.current && mappedTareas.length > 0) {
@@ -1291,6 +1300,62 @@ const handleConfirmDeleteIncident = async (revertDate = false) => {
     setError('Error al eliminar la incidencia: ' + err.message);
   }
 };
+
+// Manejadores para el Bloc de Notas & Checklist
+const handleAddNota = useCallback(async (notaData) => {
+  try {
+    await saveNota(notaData);
+    setNotasList(getNotas());
+  } catch (err) {
+    setError('Error al guardar apunte en el bloc: ' + err.message);
+  }
+}, []);
+
+const handleUpdateNota = useCallback(async (id, updates) => {
+  try {
+    await updateNota(id, updates);
+    setNotasList(getNotas());
+  } catch (err) {
+    setError('Error al actualizar apunte: ' + err.message);
+  }
+}, []);
+
+const handleDeleteNota = useCallback(async (id) => {
+  try {
+    await deleteNota(id);
+    setNotasList(getNotas());
+  } catch (err) {
+    setError('Error al eliminar apunte: ' + err.message);
+  }
+}, []);
+
+const handleConvertNotaToTask = useCallback(async ({ obraId, diaSemana, actividad, gremio, notas }) => {
+  try {
+    const taskId = 't_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+    const nowIso = new Date().toISOString();
+    await db.exec(
+      `INSERT OR REPLACE INTO tareas
+      (id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        taskId,
+        obraId,
+        currentWeekMonday,
+        diaSemana || 'Lunes',
+        actividad,
+        gremio || 'ENUE',
+        '0',
+        notas || '',
+        nowIso
+      ]
+    );
+    await loadData();
+    setSuccessMessage('¡Apunte transferido con éxito a la planificación semanal de la obra!');
+    setTimeout(() => setSuccessMessage(null), 3500);
+  } catch (err) {
+    setError('Error al crear tarea desde apunte: ' + err.message);
+  }
+}, [db, currentWeekMonday, loadData]);
 
 // Calculate Start Date and End Date for the Report
 const getReportDateRange = useCallback(() => {
@@ -2175,9 +2240,9 @@ className="bg-slate-900 hover:bg-slate-800 text-white hover:cursor-pointer font-
 </button>
 </div>
 )}
-{/* Selector de Vista: Semanal vs Cuadrante Mensual */}
+{/* Selector de Vista: Semanal vs Cuadrante Mensual vs Bloc de Notas */}
 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 mb-5 sm:mb-6 bg-white p-2.5 sm:p-3 rounded-2xl border border-slate-200 shadow-2xs">
-  <div className="grid grid-cols-2 sm:inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200/80 shadow-inner w-full sm:w-auto">
+  <div className="grid grid-cols-3 sm:inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200/80 shadow-inner w-full sm:w-auto">
     <button
       type="button"
       onClick={() => setActiveView('semanal')}
@@ -2207,13 +2272,32 @@ className="bg-slate-900 hover:bg-slate-800 text-white hover:cursor-pointer font-
         </span>
       )}
     </button>
+    <button
+      type="button"
+      onClick={() => setActiveView('notas')}
+      className={`flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+        activeView === 'notas'
+          ? 'bg-white text-slate-950 shadow-xs border border-slate-200/60'
+          : 'text-slate-600 hover:text-slate-900'
+      }`}
+    >
+      <NotebookPen className="w-4 h-4 text-amber-500 shrink-0" />
+      <span>Bloc de Notas</span>
+      {pendingNotasCount > 0 && (
+        <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-1.5 py-0.5 rounded-full ml-0.5 animate-pulse">
+          {pendingNotasCount}
+        </span>
+      )}
+    </button>
   </div>
 
   <div className="text-[11px] sm:text-xs text-slate-500 font-medium px-2 text-center sm:text-right">
     {activeView === 'semanal' ? (
       <span>Semana del <strong className="text-slate-800">{formatFriendlyDate(currentWeekMonday)}</strong></span>
-    ) : (
+    ) : activeView === 'mensual' ? (
       <span>Cuadrante de <strong className="text-slate-800">{MESES[monthViewDate.getMonth()]} {monthViewDate.getFullYear()}</strong> por obras</span>
+    ) : (
+      <span>Checklist de repasos y notas manuscritas con stylus</span>
     )}
   </div>
 </div>
@@ -3360,6 +3444,19 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
   </div>
 )}
 
+{/* VISTA: BLOC DE NOTAS & CHECKLIST */}
+{activeView === 'notas' && (
+  <NotasView
+    notas={notasList}
+    obras={obras.map(o => ({ id: o[0], nombre: o[1], activo: o[2] }))}
+    onAddNota={handleAddNota}
+    onUpdateNota={handleUpdateNota}
+    onDeleteNota={handleDeleteNota}
+    onConvertToTask={handleConvertNotaToTask}
+    currentWeekMonday={currentWeekMonday}
+  />
+)}
+
 {/* BARRA DE NAVEGACIÓN INFERIOR FIJA PARA MÓVILES (Oculta en Tablet/Escritorio e Impresión) */}
 <div className="md:hidden print:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 pt-1.5 safe-bottom shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
   <div className="grid grid-cols-5 items-center gap-1 max-w-md mx-auto">
@@ -3398,11 +3495,18 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
 
     <button
       type="button"
-      onClick={() => { setIsDictatingModalOpen(true); setParsedTasks([]); }}
-      className="flex flex-col items-center justify-center py-1 rounded-xl text-slate-500 hover:text-amber-600 font-medium transition-colors cursor-pointer"
+      onClick={() => setActiveView('notas')}
+      className={`relative flex flex-col items-center justify-center py-1 rounded-xl transition-colors cursor-pointer ${
+        activeView === 'notas' ? 'text-amber-600 font-extrabold' : 'text-slate-500 font-medium'
+      }`}
     >
-      <Mic className="w-5 h-5 text-amber-500" />
-      <span className="text-[10px] mt-0.5">Dictar</span>
+      <NotebookPen className="w-5 h-5" />
+      <span className="text-[10px] mt-0.5">Notas</span>
+      {pendingNotasCount > 0 && (
+        <span className="absolute top-0.5 right-2 w-4 h-4 bg-amber-500 text-slate-950 font-black text-[9px] rounded-full flex items-center justify-center animate-pulse">
+          {pendingNotasCount > 9 ? '9+' : pendingNotasCount}
+        </span>
+      )}
     </button>
 
     <button
