@@ -3206,7 +3206,11 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
 
                                   {/* Croquis si existe */}
                                   {task.trazo_data && (
-                                    <div onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+                                    <div 
+                                      onPointerDown={(e) => e.stopPropagation()} 
+                                      onMouseDown={(e) => e.stopPropagation()}
+                                      onTouchStart={(e) => e.stopPropagation()}
+                                    >
                                       <button
                                         type="button"
                                         onClick={(e) => { e.stopPropagation(); setTaskLightboxImage(task.trazo_data); }}
@@ -3497,7 +3501,11 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                   </div>
                                 )}
                                 {task.trazo_data && (
-                                  <div onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+                                  <div 
+                                    onPointerDown={(e) => e.stopPropagation()} 
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onTouchStart={(e) => e.stopPropagation()}
+                                  >
                                     <button
                                       type="button"
                                       onClick={(e) => { e.stopPropagation(); setTaskLightboxImage(task.trazo_data); }}
@@ -6729,36 +6737,37 @@ return (
           </div>
         )}
 
-        {/* LIGHTBOX MODAL PARA AMPLIAR CROQUIS DE TAREAS */}
-        {taskLightboxImage && (
-          <div
-            className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 cursor-zoom-out"
-            onClick={() => setTaskLightboxImage(null)}
-          >
-            <div
-              className="relative max-w-4xl max-h-[90vh] bg-white rounded-3xl p-3 shadow-2xl overflow-hidden animate-scale-in"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button
-                type="button"
-                onClick={() => setTaskLightboxImage(null)}
-                className="absolute top-4 right-4 p-2 bg-slate-900/70 hover:bg-slate-900 text-white rounded-full transition-all cursor-pointer z-10"
-              >
-                <X className="w-5 h-5" />
-              </button>
-              <img
-                src={taskLightboxImage}
-                alt="Croquis de la tarea a tamaño completo"
-                className="max-w-full max-h-[82vh] object-contain rounded-2xl mx-auto"
-              />
-            </div>
-          </div>
-        )}
-
       </div>
     </div>
   );
 })()}
+
+{/* LIGHTBOX MODAL PARA AMPLIAR CROQUIS DE TAREAS (GLOBAL EN CUALQUIER PESTAÑA O VISTA) */}
+{taskLightboxImage && (
+  <div
+    className="fixed inset-0 z-[9999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 cursor-zoom-out"
+    onClick={() => setTaskLightboxImage(null)}
+  >
+    <div
+      className="relative max-w-4xl max-h-[90vh] bg-white rounded-3xl p-3 sm:p-4 shadow-2xl overflow-hidden"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        onClick={() => setTaskLightboxImage(null)}
+        className="absolute top-4 right-4 p-2 bg-slate-900/80 hover:bg-slate-900 text-white rounded-full transition-all cursor-pointer z-10 shadow-md"
+        title="Cerrar vista ampliada"
+      >
+        <X className="w-5 h-5" />
+      </button>
+      <img
+        src={taskLightboxImage}
+        alt="Croquis de la tarea a tamaño completo"
+        className="max-w-full max-h-[82vh] object-contain rounded-2xl mx-auto shadow-inner bg-slate-50"
+      />
+    </div>
+  </div>
+)}
 </div>
 );
 }
