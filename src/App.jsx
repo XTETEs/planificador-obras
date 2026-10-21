@@ -518,6 +518,18 @@ useEffect(() => {
   }
 }, []);
 
+// Cerrar modal de informe de repasos con la tecla Escape
+useEffect(() => {
+  if (!isReportModalOpen) return;
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      setIsReportModalOpen(false);
+    }
+  };
+  window.addEventListener('keydown', handleKeyDown);
+  return () => window.removeEventListener('keydown', handleKeyDown);
+}, [isReportModalOpen]);
+
 const handleLogout = async () => {
   if (!confirm(`¿Deseas cerrar tu sesión corporativa (${currentUser?.email})?`)) return;
   try {
@@ -5102,8 +5114,24 @@ return (
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-4 bg-slate-950/60 backdrop-blur-xs print:bg-white print:p-0 print:absolute print:inset-0 print:z-50 print:block">
-      <div className="bg-slate-100 rounded-none md:rounded-2xl shadow-2xl w-full max-w-6xl h-full md:h-[92vh] flex flex-col md:flex-row overflow-hidden print:bg-white print:shadow-none print:h-auto print:max-w-none print:rounded-none">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-4 bg-slate-950/60 backdrop-blur-xs print:bg-white print:p-0 print:absolute print:inset-0 print:z-50 print:block"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) setIsReportModalOpen(false);
+      }}
+    >
+      <div className="bg-slate-100 rounded-none md:rounded-2xl shadow-2xl w-full max-w-6xl h-full md:h-[92vh] flex flex-col md:flex-row overflow-hidden relative print:bg-white print:shadow-none print:h-auto print:max-w-none print:rounded-none">
+        
+        {/* Botón flotante siempre visible para salir de la pantalla de informe */}
+        <button
+          type="button"
+          onClick={() => setIsReportModalOpen(false)}
+          className="hidden md:flex absolute top-3 right-4 z-40 bg-slate-900/90 hover:bg-rose-600 active:scale-95 text-white font-bold px-3 py-1.5 rounded-xl shadow-lg items-center gap-1.5 cursor-pointer transition-all border border-slate-700/80 backdrop-blur-md text-xs print:hidden"
+          title="Salir de la pantalla de informe y volver al planificador"
+        >
+          <X className="w-4 h-4 text-rose-400 group-hover:text-white" />
+          <span>Salir</span>
+        </button>
         
         {/* BARRA SUPERIOR MÓVIL DEL INFORME (Solo visible en móviles < 768px) */}
         <div className="md:hidden bg-slate-900 text-white p-3 border-b border-slate-800 shrink-0 print:hidden space-y-2.5">
@@ -5183,12 +5211,23 @@ return (
         {/* PANEL LATERAL: CONFIGURACIÓN Y FILTROS DEL INFORME (Oculto al Imprimir) */}
         <div className={`${mobileReportTab === 'filters' ? 'flex' : 'hidden'} md:flex w-full md:w-80 bg-white border-b md:border-b-0 md:border-r border-slate-200 p-4 sm:p-5 flex-col justify-between shrink-0 print:hidden overflow-y-auto flex-1 md:flex-initial`}>
           <div className="space-y-4">
-            <div className="hidden md:flex items-center gap-2 border-b border-slate-100 pb-3">
-              <FileSpreadsheet className="w-5 h-5 text-amber-500" />
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm sm:text-base">Informe de Repasos</h3>
-                <p className="text-[11px] text-slate-400">Seguimiento de ejecución e incidencias</p>
+            <div className="hidden md:flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-5 h-5 text-amber-500 shrink-0" />
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm sm:text-base leading-tight">Informe de Repasos</h3>
+                  <p className="text-[11px] text-slate-400">Seguimiento de ejecución</p>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsReportModalOpen(false)}
+                className="px-2.5 py-1.5 bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 font-bold text-xs rounded-lg flex items-center gap-1 cursor-pointer transition-colors border border-slate-200"
+                title="Salir del informe"
+              >
+                <X className="w-4 h-4" />
+                <span>Salir</span>
+              </button>
             </div>
 
             {/* Pestañas de tipo de período */}
@@ -5569,9 +5608,10 @@ return (
             <button
               type="button"
               onClick={() => setIsReportModalOpen(false)}
-              className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 rounded-xl text-xs cursor-pointer transition-all border-none"
+              className="w-full bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold py-2 rounded-xl text-xs cursor-pointer transition-all border border-rose-200 flex items-center justify-center gap-1.5"
             >
-              Cerrar
+              <X className="w-4 h-4" />
+              <span>Salir del Informe</span>
             </button>
           </div>
         </div>
@@ -5612,6 +5652,15 @@ return (
                     >
                       <Mail className="w-3.5 h-3.5 text-amber-400" />
                       <span>Enviar por Email</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsReportModalOpen(false)}
+                      className="px-3 py-1 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-[11px] rounded-lg shadow-xs flex items-center gap-1 cursor-pointer transition-all ml-1.5"
+                      title="Salir de esta pantalla y volver al planificador"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Salir</span>
                     </button>
                   </div>
                   <h1 className="text-xs sm:text-sm font-black text-slate-900 uppercase tracking-tight m-0">
