@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
-Mic,
-MicOff,
 Sparkles,
 CheckSquare,
 Square,
@@ -282,7 +280,6 @@ const [offlineStatus, setOfflineStatus] = useState({
   pendingOfflineCount: 0,
   isFlushing: false
 });
-const [isDictatingModalOpen, setIsDictatingModalOpen] = useState(false);
 const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
 const [isNewObraModalOpen, setIsNewObraModalOpen] = useState(false);
 const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
@@ -379,12 +376,6 @@ const [newObraNombre, setNewObraNombre] = useState('');
 const [isManageObrasModalOpen, setIsManageObrasModalOpen] = useState(false);
 const [editingObraId, setEditingObraId] = useState(null);
 const [editingObraNombre, setEditingObraNombre] = useState('');
-// Mic / Audio Dictation state
-const [isListening, setIsListening] = useState(false);
-const [transcript, setTranscript] = useState('');
-const [isParsingSpeech, setIsParsingSpeech] = useState(false);
-const [parsedTasks, setParsedTasks] = useState([]); // Preview of parsed tasks before inserting
-const recognitionRef = useRef(null);
 const hasAutoJumpedWeekRef = useRef(false);
 
 // Fetch list of works and tasks
@@ -1740,263 +1731,6 @@ setError('Error al borrar actividad: ' + err.message);
 loadData(); // refresh
 }
 };
-// Web Speech API Initialization
-const initSpeech = () => {
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-if (!SpeechRecognition) {
-alert('La API de reconocimiento de voz no está soportada en este navegador. Puedes escribir el texto directamente en el panel.');
-return;
-}
-const rec = new SpeechRecognition();
-rec.continuous = true;
-rec.lang = 'es-ES';
-rec.interimResults = true;
-rec.onstart = () => {
-setIsListening(true);
-};
-rec.onresult = (event) => {
-let finalT = '';
-for (let i = event.resultIndex; i < event.results.length; ++i) {
-if (event.results[i].isFinal) {
-finalT += event.results[i][0].transcript + ' ';
-}
-}
-if (finalT) {
-setTranscript(prev => (prev + finalT).trim());
-}
-};
-rec.onerror = (event) => {
-console.error('Speech error', event.error);
-};
-rec.onend = () => {
-setIsListening(false);
-};
-recognitionRef.current = rec;
-};
-useEffect(() => {
-initSpeech();
-return () => {
-if (recognitionRef.current) {
-recognitionRef.current.abort();
-}
-};
-}, []);
-// Toggle micro dictation
-const toggleListening = () => {
-const rec = recognitionRef.current;
-if (!rec) {
-initSpeech();
-return;
-}
-if (isListening) {
-rec.stop();
-} else {
-rec.start();
-}
-};
-// Local Offline Smart Parser (Modo Obra Sin Cobertura)
-const parseDictationLocally = (rawText) => {
-  const defaultObraId = (selectedObraId && selectedObraId !== 'all')
-    ? selectedObraId
-    : (obras[0]?.[0] || '');
-  const segments = rawText
-    .split(/(?:[\.\n;]+|\b(?:luego|después|además|también|por otro lado)\b)/i)
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  const dayPatterns = [
-    { name: 'Lunes', regex: /\blunes\b/i },
-    { name: 'Martes', regex: /\bmartes\b/i },
-    { name: 'Miércoles', regex: /\bmi[eé]rcoles\b/i },
-    { name: 'Jueves', regex: /\bjueves\b/i },
-    { name: 'Viernes', regex: /\bviernes\b/i }
-  ];
-
-  const gremioKeywords = [
-    { gremio: 'Electricidad', regex: /\b(electric\w*|luz|cuadro|cable\w*|enchufe\w*|iluminaci\w*|luminaria\w*)\b/i },
-    { gremio: 'Fontanería', regex: /\b(fontaner\w*|agua|tuber\w*|desag[uü]e\w*|sanitario\w*|grif\w*|bajante\w*)\b/i },
-    { gremio: 'Pintura', regex: /\b(pintur\w*|pintar|esmalte|repaso de pintura|lijar|plastecer)\b/i },
-    { gremio: 'Pladur / Yeso', regex: /\b(pladur|yeso|tabique\w*|trasdosado\w*|falso techo|escayola)\b/i },
-    { gremio: 'Albañilería', regex: /\b(albañil\w*|alicat\w*|solad\w*|mortero|roza\w*|enfosc\w*|ladrillo\w*|baldosa\w*)\b/i },
-    { gremio: 'Carpintería', regex: /\b(carpinter\w*|puerta\w*|armario\w*|rodapi[eé]\w*|madera|tarima)\b/i },
-    { gremio: 'Climatización', regex: /\b(clima\w*|aire acondicionado|aerotermia|conducto\w*|fancoil|calefacci\w*|suelo radiante)\b/i },
-    { gremio: 'Cerramientos', regex: /\b(ventana\w*|cristal\w*|vidrio\w*|aluminio|pvc|cerrajer\w*|barandilla\w*)\b/i },
-    { gremio: 'Estructura', regex: /\b(estructur\w*|hormig[oó]n|forjado|pilar\w*|viga\w*|cimentaci\w*|ferralla)\b/i },
-    { gremio: 'Limpieza', regex: /\b(limpiez\w*|limpiar|escombro\w*|retirada)\b/i },
-    { gremio: 'Jardinería / Exteriores', regex: /\b(jard[ií]n\w*|exterior\w*|piscina|vallado|terraza)\b/i }
-  ];
-
-  let currentDay = 'Lunes';
-  let currentObra = defaultObraId;
-
-  return segments.map((seg) => {
-    for (const dp of dayPatterns) {
-      if (dp.regex.test(seg)) {
-        currentDay = dp.name;
-        break;
-      }
-    }
-    for (const o of obras) {
-      const obraName = (o[1] || '').trim();
-      if (obraName && seg.toLowerCase().includes(obraName.toLowerCase())) {
-        currentObra = o[0];
-        break;
-      }
-    }
-    let detectedGremio = 'ENUE';
-    for (const gk of gremioKeywords) {
-      if (gk.regex.test(seg)) {
-        detectedGremio = gk.gremio;
-        break;
-      }
-    }
-    let cleanAct = seg
-      .replace(/^(el|para el|en el)?\s*(lunes|martes|mi[eé]rcoles|jueves|viernes)\s*(hay que|toca|hacer|realizar)?\s*/i, '')
-      .trim();
-    if (!cleanAct) cleanAct = seg;
-    cleanAct = cleanAct.charAt(0).toUpperCase() + cleanAct.slice(1);
-
-    return {
-      obra_id: currentObra,
-      dia_semana: currentDay,
-      actividad: cleanAct,
-      gremio: detectedGremio,
-      notas: ''
-    };
-  });
-};
-
-// AI Smart Parsing of dictation (with automatic Offline Fallback at the construction site)
-const parseDictationWithAI = async () => {
-if (!transcript.trim()) return;
-setIsParsingSpeech(true);
-setError(null);
-
-if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-  const localTasks = parseDictationLocally(transcript);
-  setParsedTasks(localTasks);
-  setSuccessMessage('📡 Modo Obra Sin Cobertura: Dictado estructurado localmente en el dispositivo sin necesidad de internet.');
-  setIsParsingSpeech(false);
-  return;
-}
-
-try {
-const client = AiKit.createClient();
-const obrasTextList = obras.length > 0
-  ? obras.map(o => `ID "${o[0]}": "${o[1]}"`).join('\n')
-  : 'Sin obras registradas todavía';
-const defaultObraDirective = obras.length > 0
-  ? `Si no se puede deducir la obra, usa por defecto el ID "${obras[0][0]}" (${obras[0][1]}).`
-  : 'Usa una obra general o vacía si no existe.';
-const systemPrompt = `
-Eres un experto planificador y estructurador de agendas de obra en España.
-Tu misión es analizar una transcripción de voz (dictado) de obra y extraer actividades y organizarlas por días de la semana y obras.
-Estas son las obras registradas del usuario actualmente en el sistema (usa exactamente sus IDs):
-${obrasTextList}
-${defaultObraDirective}
-Organiza cada tarea según los días laborables de la semana en España de Lunes a Viernes: "Lunes", "Martes", "Miércoles", "Jueves", "Viernes".
-Intenta clasificar el gremio / subcontratista o gremio que ejecuta de entre estos valores predefinidos si es claro:
-- Albañilería
-- Estructura
-- Pintura
-- Fontanería
-- Electricidad
-- Pladur / Yeso
-- Climatización
-- Carpintería
-- Instalaciones
-- Limpieza
-- Cerramientos
-- Jardinería / Exteriores
-- Otros
-Devuelve un array JSON limpio que contenga los campos:
-- "obra_id" (string literal coincidente con la lista de obras)
-- "dia_semana" (string exacto: Lunes, Martes, Miércoles, Jueves o Viernes)
-- "actividad" (string de la tarea dictada, haz que el nombre sea profesional y conciso de 3 a 8 palabras)
-- "gremio" (string de alguno de los predefinidos)
-- "notas" (string con explicaciones adicionales si las hay, o string vacío "")
-Devuelve ÚNICAMENTE el código JSON listo para procesar. No añadas introducciones, explicaciones, ni etiquetas de programación en tu respuesta. El JSON debe comenzar directamente con '['.
-`;
-const response = await client.chat.completions.create({
-model: 'aikit/fast',
-tool_choice: 'none',
-messages: [
-{ role: 'system', content: systemPrompt },
-{ role: 'user', content: `Este es mi dictado de obra: "${transcript}"` }
-]
-});
-const rawContent = response.choices[0]?.message?.content || '';
-// Safe parse JSON
-let cleaned = rawContent
-.replace(/^[\s\S]*?```(?:json)?\s*\n?/i, '')
-.replace(/\n?\s*```[\s\S]*$/, '')
-.trim();
-if (!cleaned) cleaned = rawContent.trim();
-const resultJson = JSON.parse(cleaned);
-if (Array.isArray(resultJson)) {
-setParsedTasks(resultJson);
-} else {
-throw new Error('La IA no devolvió un formato de array adecuado.');
-}
-} catch (err) {
-  // Si falla por falta de cobertura móvil en obra, usar automáticamente el motor local
-  const localTasks = parseDictationLocally(transcript);
-  if (localTasks.length > 0) {
-    setParsedTasks(localTasks);
-    setSuccessMessage('📡 Cobertura débil detectada: Dictado estructurado automáticamente en modo local del dispositivo.');
-  } else {
-    setError('Error al procesar dictado: ' + err.message);
-  }
-} finally {
-setIsParsingSpeech(false);
-}
-};
-// Save all preview/parsed tasks to SQLite
-const saveParsedTasks = async () => {
-if (parsedTasks.length === 0) return;
-if (obras.length === 0) {
-  setError('Debes registrar al menos una obra antes de importar tareas del dictado.');
-  setIsDictatingModalOpen(false);
-  setIsManageObrasModalOpen(true);
-  return;
-}
-const defaultObraId = obras[0][0];
-try {
-const nowIso = new Date().toISOString();
-// Insert each task
-const pendingQueries = parsedTasks.map((t, idx) => {
-const taskId = 't_' + Date.now() + '_' + idx;
-const assignedObraId = (t.obra_id && obras.some(o => o[0] === t.obra_id)) ? t.obra_id : defaultObraId;
-return db.exec(
-`INSERT OR REPLACE INTO tareas
-(id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-[
-taskId,
-assignedObraId,
-currentWeekMonday,
-t.dia_semana || 'Lunes',
-t.actividad || 'Falta definición',
-t.gremio || 'Otros',
-'0',
-t.notes || t.notas || '',
-nowIso
-]
-);
-});
-await Promise.all(pendingQueries);
-setParsedTasks([]);
-setTranscript('');
-setIsDictatingModalOpen(false);
-setError(null);
-await loadData();
-} catch (err) {
-setError('Error guardando las tareas estructuradas: ' + err.message);
-}
-};
-const removeParsedTaskPreview = (index) => {
-setParsedTasks(prev => prev.filter((_, i) => i !== index));
-};
 // Filter tasks by active view
 const filteredTareas = useMemo(() => {
 if (selectedObraId === 'all') return tareas;
@@ -2158,14 +1892,6 @@ title="Generar informe semanal, quincenal o mensual de tareas no ejecutadas y re
 >
 <FileSpreadsheet className="w-4 h-4 text-amber-500 shrink-0" />
 <span className="truncate">Informe Repasos</span>
-</button>
-{/* Dictate Button */}
-<button
-onClick={() => { setIsDictatingModalOpen(true); setParsedTasks([]); }}
-className="bg-amber-500 hover:bg-amber-600 text-slate-950 hover:cursor-pointer font-semibold px-3 sm:px-4 py-2.5 rounded-xl flex items-center justify-center sm:justify-start gap-2 transition-all shadow-md shadow-amber-500/10 shrink-0 text-xs sm:text-sm"
->
-<Mic className="w-4 h-4 sm:w-5 sm:h-5 animate-pulse shrink-0" />
-<span className="truncate">Dictar Plan</span>
 </button>
 {/* Create manual task */}
 <button
@@ -2771,9 +2497,9 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
 {/* Footer instructions */}
 <div className="mt-10 bg-slate-100 border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row items-center gap-4 justify-between">
 <div className="flex items-center gap-3">
-<Sparkles className="w-5 h-5 text-amber-500 animate-bounce" />
+<Sparkles className="w-5 h-5 text-amber-500 shrink-0" />
 <p className="text-sm font-medium text-slate-600">
-<strong>Consejo rápido:</strong> Usa el botón de <strong className="text-slate-900">"Dictar Plan"</strong> para dictar todo tu cronograma de la semana en un solo speech. Nuestro motor de IA se encargará de clasificarlo y meterlo en tu checklist.
+<strong>Consejo rápido:</strong> Utiliza el <strong className="text-slate-900">Bloc de Notas</strong> para registrar apuntes rápidos en obra, croquis a mano alzada o tareas que podrás transferir directamente a la planificación semanal.
 </p>
 </div>
 </div>
@@ -3623,136 +3349,6 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
   </div>
 </div>
 
-{/* MODAL: SMART VOICE DICTATION */}
-{isDictatingModalOpen && (
-<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
-<div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
-{/* Header */}
-<div className="bg-slate-900 text-white p-5 flex justify-between items-center">
-<div className="flex items-center gap-2">
-<Sparkles className="w-5 h-5 text-amber-400 animate-pulse" />
-<h3 className="font-bold text-lg">Asistente Inteligente de Dictado</h3>
-</div>
-<button onClick={() => setIsDictatingModalOpen(false)} className="text-slate-400 hover:text-white p-1 rounded-lg hover:cursor-pointer border-none bg-transparent">
-<X className="w-5 h-5" />
-</button>
-</div>
-{/* Body */}
-<div className="p-6 overflow-y-auto space-y-6 flex-1 min-h-[300px]">
-{/* Mic interaction section */}
-<div className="flex flex-col items-center justify-center p-6 bg-slate-50 border border-slate-200 rounded-xl text-center">
-<button
-onClick={toggleListening}
-className={`w-20 h-20 rounded-full flex items-center justify-center transition-all border-none ${
-isListening
-? 'bg-red-500 text-white shadow-xl shadow-red-500/20 animate-pulse scale-105'
-: 'bg-amber-500 hover:bg-amber-600 text-slate-950 hover:cursor-pointer shadow-lg shadow-amber-500/10'
-}`}
->
-{isListening ? <MicOff className="w-10 h-10" /> : <Mic className="w-10 h-10" />}
-</button>
-<h4 className="mt-4 font-bold text-slate-900 text-sm">
-{isListening ? 'Escuchando tu dictado... Habla de forma natural' : 'Haz clic en el micro para empezar a dictar'}
-</h4>
-<p className="text-[11px] text-slate-400 mt-1">Usa la Web Speech API de tu navegador para capturar tu voz.</p>
-</div>
-{/* Sample prompts */}
-<div className="bg-amber-50/50 border border-amber-100 p-4 rounded-lg">
-<span className="text-xs font-bold text-amber-800 block mb-1 uppercase tracking-wider">💡 Sugerencia de dictado:</span>
-<p className="text-xs italic text-slate-600">
-"El lunes en Salamanca 50 pintar el techo del hall de entrada. Para el miércoles en Hotel Erre tirar tabiquería de yeso y el viernes limpieza profunda en general."
-</p>
-</div>
-{/* Transcript Output / Direct Input box */}
-<div>
-<label className="block text-xs font-bold text-slate-500 uppercase mb-2">Editor del Dictado</label>
-<textarea
-value={transcript}
-onChange={(e) => setTranscript(e.target.value)}
-placeholder="El texto dictado aparecerá aquí, también puedes escribirlo a mano directamente..."
-className="w-full h-32 bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all resize-y"
-/>
-</div>
-{/* AI Parsing Button */}
-{transcript.trim() && (
-<div className="flex justify-center">
-<button
-onClick={parseDictationWithAI}
-disabled={isParsingSpeech}
-className="bg-slate-900 text-white font-semibold hover:bg-slate-800 hover:cursor-pointer px-5 py-2.5 rounded-xl flex items-center gap-2 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:pointer-events-none border-none"
->
-{isParsingSpeech ? (
-<>
-<RefreshCw className="w-4 h-4 animate-spin text-amber-500" />
-<span>Procesando con IA...</span>
-</>
-) : (
-<>
-<Sparkles className="w-4 h-4 text-amber-400" />
-<span>Estructurar Plan con IA</span>
-</>
-)}
-</button>
-</div>
-)}
-{/* Parsed Activities PREVIEW */}
-{parsedTasks.length > 0 && (
-<div className="space-y-3 border-t border-slate-100 pt-5">
-<div className="flex justify-between items-center mb-2">
-<h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-<CheckSquare className="w-4 h-4 text-emerald-500" />
-Revisar Tareas antes de Generar
-</h4>
-<span className="text-xs font-bold text-slate-400">{parsedTasks.length} detectadas</span>
-</div>
-<div className="space-y-2 max-h-[250px] overflow-y-auto">
-{parsedTasks.map((pt, i) => {
-const matchedObra = obras.find(o => o[0] === pt.obra_id);
-return (
-<div key={i} className="p-3 bg-emerald-50/10 border border-emerald-100 rounded-lg flex items-start gap-2.5 text-xs">
-<div className="flex-1 space-y-1">
-<div className="flex items-center gap-1.5 flex-wrap">
-<span className="bg-amber-500 text-slate-950 font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wide text-[9px]">{pt.dia_semana}</span>
-<span className={`font-bold px-1.5 py-0.5 rounded-sm uppercase text-[9px] ${getGremioTagClasses(pt.gremio)}`}>{pt.gremio}</span>
-<span className="text-[10px] text-slate-500 font-semibold">• 🚧 {matchedObra ? matchedObra[1] : 'Obra Salamanca 50'}</span>
-</div>
-<p className="font-bold text-slate-800">{pt.actividad}</p>
-{pt.notas && <p className="text-[10px] text-slate-400 italic">💡 {pt.notas}</p>}
-</div>
-<button
-onClick={() => removeParsedTaskPreview(i)}
-className="text-slate-400 hover:text-red-500 hover:cursor-pointer p-0.5 border-none bg-transparent"
->
-<Trash2 className="w-4 h-4" />
-</button>
-</div>
-);
-})}
-</div>
-<div className="bg-slate-100 p-3 rounded-lg flex items-center justify-between mt-4">
-<span className="text-xs text-slate-500 font-medium">¿Todo correcto para guardarlo en tu checklist?</span>
-<button
-onClick={saveParsedTasks}
-className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg text-xs hover:cursor-pointer transition-all border-none"
->
-Insertar Tareas en Calendario
-</button>
-</div>
-</div>
-)}
-</div>
-{/* Footer */}
-<div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-end gap-2">
-<button
-onClick={() => setIsDictatingModalOpen(false)}
-className="bg-slate-200 hover:bg-slate-300 text-slate-800 px-4 py-2 text-xs font-semibold rounded-lg hover:cursor-pointer border-none"
->
-Cancelar
-</button>
-</div>
-</div>
-</div>
-)}
 {/* MODAL: MANUAL TASK CREATION */}
 {isNewTaskModalOpen && (
 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
