@@ -179,9 +179,62 @@ export function subscribeToOfflineStatus(fn) {
 }
 
 /**
+ * Sanitiza documentos de notas para cumplir al 100% con las reglas de Firestore (hasOnly)
+ */
+function sanitizeNotaDoc(data, docId) {
+  if (!data) return null;
+  const id = String(data.id || docId).slice(0, 100);
+  const doc = {
+    id,
+    tipo: data.tipo === 'trazo' ? 'trazo' : 'texto',
+    completada: data.completada ? 1 : 0,
+    fecha_creacion: String(data.fecha_creacion || new Date().toISOString())
+  };
+  if (data.texto !== undefined && data.texto !== null) {
+    doc.texto = String(data.texto).slice(0, 5000);
+  }
+  if (data.fecha_completada) {
+    doc.fecha_completada = String(data.fecha_completada).slice(0, 50);
+  }
+  if (data.trazo_data) {
+    doc.trazo_data = String(data.trazo_data).slice(0, 600000);
+  }
+  if (data.prioridad && ['normal', 'urgente', 'repaso'].includes(data.prioridad)) {
+    doc.prioridad = data.prioridad;
+  }
+  if (data.obra_id) {
+    doc.obra_id = String(data.obra_id).slice(0, 100);
+  }
+  return doc;
+}
+
+/**
+ * Sanitiza documentos de tareas para cumplir al 100% con las reglas de Firestore (hasOnly)
+ */
+function sanitizeTareaDoc(data, docId) {
+  if (!data) return null;
+  const id = String(data.id || docId).slice(0, 100);
+  const doc = {
+    id,
+    obra_id: String(data.obra_id || '').slice(0, 100),
+    fecha_semana: String(data.fecha_semana || '').slice(0, 10),
+    dia_semana: String(data.dia_semana || 'Lunes'),
+    actividad: String(data.actividad || 'Actividad').slice(0, 1000),
+    gremio: String(data.gremio || 'Otros').slice(0, 100),
+    completada: data.completada ? 1 : 0,
+    notas: String(data.notas || '').slice(0, 2000),
+    fecha_creado: String(data.fecha_creado || new Date().toISOString()).slice(0, 50)
+  };
+  if (data.trazo_data) {
+    doc.trazo_data = String(data.trazo_data).slice(0, 600000);
+  }
+  return doc;
+}
+
+/**
  * Envía a Firestore un cambio individual con límite de tiempo para evitar bloqueos por mala cobertura 3G/4G en obra
  */
-function withNetworkTimeout(promise, ms = 4500) {
+function withNetworkTimeout(promise, ms = 15000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error('Tiempo de espera agotado por baja cobertura móvil'));
@@ -227,24 +280,31 @@ export async function flushOfflineQueue() {
 
       try {
         if (op.type === 'set_obra' && op.data) {
+          const obraDoc = {
+            id: String(op.data.id || op.docId).slice(0, 100),
+            nombre: String(op.data.nombre || 'Obra').slice(0, 200),
+            activo: op.data.activo !== undefined ? Number(op.data.activo) : 1
+          };
           await withNetworkTimeout(
-            setDoc(doc(firestore, 'users', uidAtStart, 'obras', String(op.docId)), op.data, { merge: true })
+            setDoc(doc(firestore, 'users', uidAtStart, 'obras', String(op.docId)), obraDoc, { merge: true })
           );
         } else if (op.type === 'delete_obra') {
           await withNetworkTimeout(
             deleteDoc(doc(firestore, 'users', uidAtStart, 'obras', String(op.docId)))
           );
         } else if (op.type === 'set_tarea' && op.data) {
+          const cleanTarea = sanitizeTareaDoc(op.data, op.docId);
           await withNetworkTimeout(
-            setDoc(doc(firestore, 'users', uidAtStart, 'tareas', String(op.docId)), op.data, { merge: true })
+            setDoc(doc(firestore, 'users', uidAtStart, 'tareas', String(op.docId)), cleanTarea, { merge: true })
           );
         } else if (op.type === 'delete_tarea') {
           await withNetworkTimeout(
             deleteDoc(doc(firestore, 'users', uidAtStart, 'tareas', String(op.docId)))
           );
         } else if (op.type === 'set_nota' && op.data) {
+          const cleanNota = sanitizeNotaDoc(op.data, op.docId);
           await withNetworkTimeout(
-            setDoc(doc(firestore, 'users', uidAtStart, 'notas', String(op.docId)), op.data, { merge: true })
+            setDoc(doc(firestore, 'users', uidAtStart, 'notas', String(op.docId)), cleanNota, { merge: true })
           );
         } else if (op.type === 'delete_nota') {
           await withNetworkTimeout(
@@ -257,8 +317,21 @@ export async function flushOfflineQueue() {
         saveOfflineQueue(currentQ, uidAtStart);
         syncedCount++;
       } catch (err) {
-        // Si falla por microcorte o falta de cobertura en la obra, se mantiene en la cola para el siguiente intento automático
-        console.warn('Operación retenida en cola local por baja cobertura:', op.type, op.docId, err?.message);
+        console.warn('Operación retenida en cola local:', op.type, op.docId, err?.message);
+        // Si el error es de permisos o documento inválido irrecuperable, descartarlo de la cola para no bloquear el resto
+        const isPermanentError =
+          err?.code === 'permission-denied' ||
+          err?.code === 'invalid-argument' ||
+          (err?.message && err.message.toLowerCase().includes('permission'));
+
+        if (isPermanentError) {
+          console.error('Descartando de la cola operación con datos incompatibles para no bloquear sincronización:', op.type, op.docId);
+          const currentQ = getOfflineQueue(uidAtStart).filter(item => item.opId !== op.opId);
+          saveOfflineQueue(currentQ, uidAtStart);
+          continue; // Continuar con la siguiente operación de la cola
+        }
+
+        // Si es un corte temporal de red o timeout, detener la sincronización de esta tanda
         break;
       }
     }
@@ -533,9 +606,9 @@ export async function forceCloudSync() {
 
     // 2. Descargar estado actualizado desde Firestore
     const [obrasSnap, tareasSnap, notasSnap] = await Promise.all([
-      withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'obras')), 5000),
-      withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'tareas')), 5000),
-      withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'notas')), 5000)
+      withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'obras')), 15000),
+      withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'tareas')), 15000),
+      withNetworkTimeout(getDocs(collection(firestore, 'users', currentUserId, 'notas')), 15000)
     ]);
 
     const nextObrasMap = new Map();

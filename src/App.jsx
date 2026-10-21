@@ -2246,10 +2246,22 @@ className="bg-slate-900 hover:bg-slate-800 text-white hover:cursor-pointer font-
         type="button"
         onClick={async () => {
           setSyncing(true);
-          await flushOfflineQueue();
-          await forceCloudSync();
-          await loadData();
-          setSyncing(false);
+          try {
+            const res = await flushOfflineQueue();
+            await forceCloudSync();
+            await loadData();
+            if (res && res.syncedCount > 0) {
+              setSuccessMessage(`¡${res.syncedCount} cambios sincronizados con éxito en la nube!`);
+            } else {
+              setSuccessMessage('Sincronización completada con la nube.');
+            }
+            setTimeout(() => setSuccessMessage(null), 3500);
+          } catch (e) {
+            console.error('Error al sincronizar:', e);
+            setError('Error al sincronizar con la nube: ' + e.message);
+          } finally {
+            setSyncing(false);
+          }
         }}
         className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs"
       >
