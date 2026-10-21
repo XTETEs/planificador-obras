@@ -48,7 +48,9 @@ CheckCheck,
 Wifi,
 WifiOff,
 CloudUpload,
-NotebookPen
+NotebookPen,
+Maximize2,
+PenTool
 } from 'lucide-react';
 import { doc, setDoc } from 'firebase/firestore';
 import { migrateLocalDataToFirestore, setUserContext, getCurrentUserId, forceCloudSync, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio, subscribeToOfflineStatus, flushOfflineQueue, firestore, getNotas, saveNota, updateNota, deleteNota } from './services/db.js';
@@ -274,6 +276,7 @@ const [monthlyFilterGremio, setMonthlyFilterGremio] = useState('all');
 const [error, setError] = useState(null);
 const [successMessage, setSuccessMessage] = useState(null);
 const [syncing, setSyncing] = useState(false);
+const [taskLightboxImage, setTaskLightboxImage] = useState(null);
 const [offlineStatus, setOfflineStatus] = useState({
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine !== false : true,
   pendingOfflineCount: 0,
@@ -410,7 +413,8 @@ const loadData = useCallback(async () => {
       gremio: row[5],
       completada: isTaskCompleted(row[6]),
       notas: row[7],
-      obra_nombre: row[8] || 'Obra Desconocida'
+      obra_nombre: row[8] || 'Obra Desconocida',
+      trazo_data: row[9] || null
     }));
     setTodasLasTareas(mappedTareas);
 
@@ -1329,14 +1333,14 @@ const handleDeleteNota = useCallback(async (id) => {
   }
 }, []);
 
-const handleConvertNotaToTask = useCallback(async ({ obraId, diaSemana, actividad, gremio, notas }) => {
+const handleConvertNotaToTask = useCallback(async ({ obraId, diaSemana, actividad, gremio, notas, trazo_data }) => {
   try {
     const taskId = 't_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
     const nowIso = new Date().toISOString();
     await db.exec(
       `INSERT OR REPLACE INTO tareas
-      (id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado, trazo_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         taskId,
         obraId,
@@ -1346,11 +1350,12 @@ const handleConvertNotaToTask = useCallback(async ({ obraId, diaSemana, activida
         gremio || 'ENUE',
         '0',
         notas || '',
-        nowIso
+        nowIso,
+        trazo_data || null
       ]
     );
     await loadData();
-    setSuccessMessage('¡Apunte transferido con éxito a la planificación semanal de la obra!');
+    setSuccessMessage('¡Apunte y croquis transferidos con éxito a la planificación semanal!');
     setTimeout(() => setSuccessMessage(null), 3500);
   } catch (err) {
     setError('Error al crear tarea desde apunte: ' + err.message);
@@ -2669,6 +2674,23 @@ title={`No ejecutada en ${taskAplazamientos.length} ocasión(es). Clic para ver 
 )}
 </div>
 {cleanNotas && <p className="text-xs italic text-slate-400 break-words whitespace-normal whitespace-pre-wrap leading-relaxed border-t border-slate-100 pt-2">💡 {cleanNotas}</p>}
+{task.trazo_data && (
+  <div
+    onClick={(e) => { e.stopPropagation(); setTaskLightboxImage(task.trazo_data); }}
+    className="mt-2.5 relative rounded-2xl overflow-hidden border border-slate-200 bg-white p-1 cursor-zoom-in group/sketch shadow-2xs hover:border-amber-400 transition-all"
+    title="Toca para ver el croquis a pantalla completa"
+  >
+    <img
+      src={task.trazo_data}
+      alt="Croquis de la tarea"
+      className="w-full h-36 object-contain bg-slate-50/60 rounded-xl"
+    />
+    <div className="absolute bottom-2 right-2 bg-slate-900/80 backdrop-blur-xs text-amber-300 text-[9px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 opacity-90 group-hover/sketch:opacity-100 transition-opacity shadow-sm">
+      <Maximize2 className="w-2.5 h-2.5" />
+      <span>Ampliar croquis</span>
+    </div>
+  </div>
+)}
 <div className="flex items-center justify-between pt-1 border-t border-slate-50">
 <button
 type="button"
@@ -3137,6 +3159,21 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                     </p>
                                   )}
 
+                                  {/* Croquis si existe */}
+                                  {task.trazo_data && (
+                                    <div onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); setTaskLightboxImage(task.trazo_data); }}
+                                        className="mt-1 inline-flex items-center gap-1 text-[8px] font-bold px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100 cursor-pointer shadow-2xs"
+                                        title="Ver croquis adjunto"
+                                      >
+                                        <PenTool className="w-2.5 h-2.5 text-amber-600" />
+                                        <span>Ver croquis</span>
+                                      </button>
+                                    </div>
+                                  )}
+
                                   {/* Botones para posponer/trasladar y editar (visibles siempre en táctil) */}
                                   <div 
                                     className="absolute bottom-1 right-1 opacity-100 lg:opacity-0 lg:group-hover/card:opacity-100 flex items-center gap-0.5 bg-white/95 rounded shadow-xs p-0.5 transition-opacity"
@@ -3411,6 +3448,19 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
                                     >
                                       <AlertTriangle className="w-2.5 h-2.5 text-amber-600" />
                                       <span>No ejecutada ({taskAplazamientos.length})</span>
+                                    </button>
+                                  </div>
+                                )}
+                                {task.trazo_data && (
+                                  <div onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); setTaskLightboxImage(task.trazo_data); }}
+                                      className="mt-1 inline-flex items-center gap-0.5 text-[8px] font-bold px-1 py-0.2 rounded bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100 cursor-pointer shadow-2xs"
+                                      title="Ver croquis adjunto"
+                                    >
+                                      <PenTool className="w-2.5 h-2.5 text-amber-600" />
+                                      <span>Croquis</span>
                                     </button>
                                   </div>
                                 )}
@@ -6630,6 +6680,32 @@ return (
                   Cerrar
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* LIGHTBOX MODAL PARA AMPLIAR CROQUIS DE TAREAS */}
+        {taskLightboxImage && (
+          <div
+            className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 cursor-zoom-out"
+            onClick={() => setTaskLightboxImage(null)}
+          >
+            <div
+              className="relative max-w-4xl max-h-[90vh] bg-white rounded-3xl p-3 shadow-2xl overflow-hidden animate-scale-in"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setTaskLightboxImage(null)}
+                className="absolute top-4 right-4 p-2 bg-slate-900/70 hover:bg-slate-900 text-white rounded-full transition-all cursor-pointer z-10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <img
+                src={taskLightboxImage}
+                alt="Croquis de la tarea a tamaño completo"
+                className="max-w-full max-h-[82vh] object-contain rounded-2xl mx-auto"
+              />
             </div>
           </div>
         )}

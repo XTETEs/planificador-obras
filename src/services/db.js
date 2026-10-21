@@ -459,6 +459,7 @@ export function setUserContext(user) {
           gremio: String(data.gremio || 'Otros'),
           completada: data.completada !== undefined ? Number(data.completada) : 0,
           notas: String(data.notas || ''),
+          trazo_data: data.trazo_data ? String(data.trazo_data) : null,
           fecha_creado: String(data.fecha_creado || new Date().toISOString())
         });
       });
@@ -559,6 +560,7 @@ export async function forceCloudSync() {
         gremio: String(data.gremio || 'Otros'),
         completada: data.completada !== undefined ? Number(data.completada) : 0,
         notas: String(data.notas || ''),
+        trazo_data: data.trazo_data ? String(data.trazo_data) : null,
         fecha_creado: String(data.fecha_creado || new Date().toISOString())
       });
     });
@@ -673,7 +675,8 @@ export const db = {
           t.gremio,
           t.completada,
           t.notas,
-          obraNombre
+          obraNombre,
+          t.trazo_data || null
         ];
       });
 
@@ -687,7 +690,8 @@ export const db = {
           'gremio',
           'completada',
           'notas',
-          'obra_nombre'
+          'obra_nombre',
+          'trazo_data'
         ],
         rows,
         rowCount: rows.length
@@ -778,9 +782,9 @@ export const db = {
         return { changes: 1 };
       }
 
-      // INSERT OR REPLACE INTO tareas (id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado) VALUES (...)
+      // INSERT OR REPLACE INTO tareas (id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado, trazo_data) VALUES (...)
       if (lower.startsWith('insert or replace into tareas') || lower.startsWith('insert into tareas')) {
-        const [id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado] = params;
+        const [id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado, trazo_data] = params;
         const tareaDoc = {
           id: String(id),
           obra_id: String(obra_id),
@@ -792,6 +796,9 @@ export const db = {
           notas: String(notas || ''),
           fecha_creado: String(fecha_creado || new Date().toISOString())
         };
+        if (trazo_data) {
+          tareaDoc.trazo_data = String(trazo_data);
+        }
         // Guardado local instantáneo (0ms) + Cola Offline persistente para trabajo en obra sin cobertura
         tareasMap.set(String(id), tareaDoc);
         saveLocalSnapshot();
@@ -825,6 +832,11 @@ export const db = {
           notas: updateData.notas !== undefined ? String(updateData.notas || '') : String(existing.notas || ''),
           fecha_creado: String(existing.fecha_creado || new Date().toISOString())
         };
+        if (updateData.trazo_data !== undefined) {
+          if (updateData.trazo_data) tareaDoc.trazo_data = String(updateData.trazo_data);
+        } else if (existing.trazo_data) {
+          tareaDoc.trazo_data = existing.trazo_data;
+        }
 
         tareasMap.set(id, tareaDoc);
         saveLocalSnapshot();

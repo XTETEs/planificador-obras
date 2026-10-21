@@ -27,6 +27,7 @@ rules_version = '2';
 //   - gremio: string (required, 1-100 chars)
 //   - completada: bool | number (required, 0, 1, false, or true)
 //   - notas: string (optional, 0-2000 chars)
+//   - trazo_data: string | null (optional, max 600000 chars)
 //   - fecha_creado: string (required, ISO 8601 string, immutable)
 //
 // Collection: /users/{userId}/notas
@@ -135,7 +136,7 @@ service cloud.firestore {
 
     function isValidTarea(data, tareaId) {
       return data.keys().hasAll(['id', 'obra_id', 'fecha_semana', 'dia_semana', 'actividad', 'gremio', 'completada', 'fecha_creado']) &&
-        data.keys().hasOnly(['id', 'obra_id', 'fecha_semana', 'dia_semana', 'actividad', 'gremio', 'completada', 'notas', 'fecha_creado']) &&
+        data.keys().hasOnly(['id', 'obra_id', 'fecha_semana', 'dia_semana', 'actividad', 'gremio', 'completada', 'notas', 'trazo_data', 'fecha_creado']) &&
         data.id is string &&
         data.id.size() > 0 &&
         data.id.size() <= 100 &&
@@ -155,6 +156,7 @@ service cloud.firestore {
         data.gremio.size() <= 100 &&
         isValidFlag(data.completada) &&
         isValidOptionalNotas(data) &&
+        isValidOptionalTrazoData(data) &&
         data.fecha_creado is string &&
         data.fecha_creado.size() >= 10 &&
         data.fecha_creado.size() <= 50 &&

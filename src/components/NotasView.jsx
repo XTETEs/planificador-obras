@@ -415,9 +415,10 @@ export function NotasView({
     onConvertToTask({
       obraId: convertObraId,
       diaSemana: convertDia,
-      actividad: taskConvertModal.texto || 'Tarea desde bloc de notas',
+      actividad: taskConvertModal.texto || 'Apunte a mano alzada / Croquis',
       gremio: convertGremio,
-      notas: `Creada desde apunte del ${formatFriendlyDate(taskConvertModal.fecha_creacion)}`
+      notas: `Creada desde apunte del ${formatFriendlyDate(taskConvertModal.fecha_creacion)}`,
+      trazo_data: taskConvertModal.trazo_data || null
     });
 
     // Marcar la nota original como revisada/tachada
@@ -1066,6 +1067,18 @@ export function NotasView({
               <p className="text-xs font-semibold text-slate-800 line-clamp-3">
                 "{taskConvertModal.texto}"
               </p>
+              {taskConvertModal.trazo_data && (
+                <div className="mt-2.5 rounded-xl overflow-hidden border border-slate-200 bg-white p-1">
+                  <img
+                    src={taskConvertModal.trazo_data}
+                    alt="Vista previa croquis"
+                    className="w-full h-28 object-contain"
+                  />
+                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md mt-1 inline-block">
+                    ✓ Croquis incluido para la obra
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="space-y-3.5">
