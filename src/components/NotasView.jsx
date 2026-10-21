@@ -70,6 +70,7 @@ export function NotasView({
   const [newObraId, setNewObraId] = useState('');
   const [isDictating, setIsDictating] = useState(false);
   const speechRecognitionRef = useRef(null);
+  const inputRef = useRef(null);
 
   // Modal Canvas de Dibujo / Stylus
   const [isCanvasModalOpen, setIsCanvasModalOpen] = useState(false);
@@ -140,7 +141,10 @@ export function NotasView({
   const handleQuickAdd = (e) => {
     if (e) e.preventDefault();
     const clean = newText.trim();
-    if (!clean) return;
+    if (!clean) {
+      inputRef.current?.focus();
+      return;
+    }
 
     onAddNota({
       texto: clean,
@@ -477,6 +481,7 @@ export function NotasView({
           <div className="flex flex-col sm:flex-row items-stretch gap-2.5">
             <div className="relative flex-1">
               <input
+                ref={inputRef}
                 type="text"
                 value={newText}
                 onChange={(e) => setNewText(e.target.value)}
@@ -502,9 +507,9 @@ export function NotasView({
             <select
               value={newObraId}
               onChange={(e) => setNewObraId(e.target.value)}
-              className="px-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500/30 cursor-pointer"
+              className="px-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500/30 cursor-pointer min-w-[140px]"
             >
-              <option value="">(Sin obra asignada)</option>
+              <option value="">General (Sin obra)</option>
               {obras.map(o => (
                 <option key={o.id} value={o.id}>{o.nombre}</option>
               ))}
@@ -532,13 +537,13 @@ export function NotasView({
               <span className="hidden sm:inline">Croquis / Lápiz</span>
             </button>
 
-            {/* Botón Añadir */}
+            {/* Botón Añadir (Siempre accesible y activo) */}
             <button
               type="submit"
-              disabled={!newText.trim()}
-              className="inline-flex items-center justify-center gap-1.5 px-5 py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-amber-400 font-bold rounded-2xl text-xs transition-all shadow-sm cursor-pointer shrink-0"
+              className="inline-flex items-center justify-center gap-1.5 px-5 py-3 bg-slate-900 hover:bg-slate-800 text-amber-400 font-extrabold rounded-2xl text-xs transition-all shadow-md hover:shadow-lg active:scale-95 cursor-pointer shrink-0"
+              title="Añadir nota al bloc"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4 stroke-[3]" />
               <span>Añadir</span>
             </button>
           </div>
