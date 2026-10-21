@@ -320,7 +320,34 @@ export function NotasView({
   const handleSaveDrawing = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const dataUrl = canvas.toDataURL('image/png', 0.85);
+
+    // Crear un canvas optimizado para asegurar almacenamiento ligero y nítido
+    const maxDim = 900;
+    let targetWidth = canvas.width;
+    let targetHeight = canvas.height;
+
+    if (targetWidth > maxDim || targetHeight > maxDim) {
+      if (targetWidth > targetHeight) {
+        targetHeight = Math.round((targetHeight * maxDim) / targetWidth);
+        targetWidth = maxDim;
+      } else {
+        targetWidth = Math.round((targetWidth * maxDim) / targetHeight);
+        targetHeight = maxDim;
+      }
+    }
+
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = targetWidth;
+    exportCanvas.height = targetHeight;
+    const exportCtx = exportCanvas.getContext('2d');
+
+    // Fondo blanco suave uniforme
+    exportCtx.fillStyle = '#ffffff';
+    exportCtx.fillRect(0, 0, targetWidth, targetHeight);
+    exportCtx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
+
+    // Exportar como JPEG a 0.82 de calidad (tamaño ~40-70KB, 100% compatible y ultrarrápido)
+    let dataUrl = exportCanvas.toDataURL('image/jpeg', 0.82);
 
     onAddNota({
       texto: canvasTitle.trim() || 'Apunte a mano alzada / Croquis',

@@ -400,7 +400,7 @@ const loadData = useCallback(async () => {
     }
     // Load all tasks for printing and filter the current week for the weekly grid
     const query = `
-      SELECT t.id, t.obra_id, t.fecha_semana, t.dia_semana, t.actividad, t.gremio, t.completada, t.notas, o.nombre as obra_nombre FROM tareas t LEFT JOIN obras o ON t.obra_id = o.id ORDER BY t.fecha_semana ASC, t.fecha_creado ASC
+      SELECT t.id, t.obra_id, t.fecha_semana, t.dia_semana, t.actividad, t.gremio, t.completada, t.notas, o.nombre as obra_nombre, t.trazo_data FROM tareas t LEFT JOIN obras o ON t.obra_id = o.id ORDER BY t.fecha_semana ASC, t.fecha_creado ASC
     `;
     const tareasRes = await db.query(query);
     // Map rows into objects
@@ -1043,8 +1043,8 @@ const fechaCreado = new Date().toISOString();
 try {
 await db.exec(
 `INSERT OR REPLACE INTO tareas
-(id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+(id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado, trazo_data)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 [
 taskId,
 sourceTask.obra_id,
@@ -1054,7 +1054,8 @@ sourceTask.actividad,
 sourceTask.gremio,
 '0',
 sourceTask.notas || '',
-fechaCreado
+fechaCreado,
+sourceTask.trazo_data || null
 ]
 );
 if (normalizedWeek === currentWeekMonday) {
@@ -1065,9 +1066,20 @@ fecha_semana: normalizedWeek,
 dia_semana: targetDay,
 completada: false,
 fecha_creado: fechaCreado,
-obra_nombre: sourceTask.obra_nombre
+obra_nombre: sourceTask.obra_nombre,
+trazo_data: sourceTask.trazo_data || null
 }]);
 }
+setTodasLasTareas(prev => [...prev, {
+...sourceTask,
+id: taskId,
+fecha_semana: normalizedWeek,
+dia_semana: targetDay,
+completada: false,
+fecha_creado: fechaCreado,
+obra_nombre: sourceTask.obra_nombre,
+trazo_data: sourceTask.trazo_data || null
+}]);
 setCopyingTask(null);
 setError(null);
 setSuccessMessage(`Copia creada para la semana del ${formatFriendlyDate(normalizedWeek)}.`);
@@ -1337,6 +1349,9 @@ const handleConvertNotaToTask = useCallback(async ({ obraId, diaSemana, activida
   try {
     const taskId = 't_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
     const nowIso = new Date().toISOString();
+    const finalTrazo = trazo_data ? String(trazo_data).slice(0, 600000) : null;
+
+    // 1. Guardar en base de datos local y sincronización con Firestore
     await db.exec(
       `INSERT OR REPLACE INTO tareas
       (id, obra_id, fecha_semana, dia_semana, actividad, gremio, completada, notas, fecha_creado, trazo_data)
@@ -1351,16 +1366,34 @@ const handleConvertNotaToTask = useCallback(async ({ obraId, diaSemana, activida
         '0',
         notas || '',
         nowIso,
-        trazo_data || null
+        finalTrazo
       ]
     );
+
+    // 2. Actualización optimista inmediata en estado React para visualización instantánea (0ms)
+    const matchedObra = obras.find(o => o[0] === obraId);
+    const newLocalTask = {
+      id: taskId,
+      obra_id: obraId,
+      fecha_semana: currentWeekMonday,
+      dia_semana: diaSemana || 'Lunes',
+      actividad,
+      gremio: gremio || 'ENUE',
+      completada: false,
+      notas: notas || '',
+      obra_nombre: matchedObra ? matchedObra[1] : 'Obra Desconocida',
+      trazo_data: finalTrazo
+    };
+    setTareas(prev => [...prev.filter(t => t.id !== taskId), newLocalTask]);
+    setTodasLasTareas(prev => [...prev.filter(t => t.id !== taskId), newLocalTask]);
+
     await loadData();
     setSuccessMessage('¡Apunte y croquis transferidos con éxito a la planificación semanal!');
     setTimeout(() => setSuccessMessage(null), 3500);
   } catch (err) {
     setError('Error al crear tarea desde apunte: ' + err.message);
   }
-}, [db, currentWeekMonday, loadData]);
+}, [db, currentWeekMonday, obras, loadData]);
 
 // Calculate Start Date and End Date for the Report
 const getReportDateRange = useCallback(() => {

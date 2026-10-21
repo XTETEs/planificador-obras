@@ -797,7 +797,7 @@ export const db = {
           fecha_creado: String(fecha_creado || new Date().toISOString())
         };
         if (trazo_data) {
-          tareaDoc.trazo_data = String(trazo_data);
+          tareaDoc.trazo_data = String(trazo_data).slice(0, 600000);
         }
         // Guardado local instantáneo (0ms) + Cola Offline persistente para trabajo en obra sin cobertura
         tareasMap.set(String(id), tareaDoc);
