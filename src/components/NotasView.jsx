@@ -23,7 +23,8 @@ import {
   Maximize2,
   Tag,
   Share2,
-  Sparkles
+  Sparkles,
+  ArrowUpDown
 } from 'lucide-react';
 
 const DIAS_SEMANA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
@@ -63,6 +64,7 @@ export function NotasView({
   const [filterDateMode, setFilterDateMode] = useState('todos'); // 'todos' | 'hoy' | 'ayer' | 'semana' | 'mes' | 'custom'
   const [filterCustomDate, setFilterCustomDate] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortOrder, setSortOrder] = useState('desc'); // 'desc' = más recientes primero | 'asc' = más antiguas primero
 
   // Formulario rápido
   const [newText, setNewText] = useState('');
@@ -380,13 +382,12 @@ export function NotasView({
 
       return true;
     }).sort((a, b) => {
-      // Las pendientes primero, y dentro de cada grupo las más recientes arriba
-      if (a.completada !== b.completada) {
-        return a.completada ? 1 : -1;
-      }
-      return (b.fecha_creacion || '').localeCompare(a.fecha_creacion || '');
+      // Orden por fecha y hora de entrada (desc = más recientes primero en primera posición)
+      const timeA = new Date(a.fecha_creacion || 0).getTime();
+      const timeB = new Date(b.fecha_creacion || 0).getTime();
+      return sortOrder === 'desc' ? (timeB - timeA) : (timeA - timeB);
     });
-  }, [notas, filterStatus, filterDateMode, filterCustomDate, searchQuery, obras]);
+  }, [notas, filterStatus, filterDateMode, filterCustomDate, searchQuery, obras, sortOrder]);
 
   // Contadores para métricas
   const counts = useMemo(() => {
@@ -632,9 +633,20 @@ export function NotasView({
           </div>
         </div>
 
-        {/* Buscador & Acción de Limpiar Revisadas */}
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1 sm:w-48">
+        {/* Ordenación, Buscador & Acción de Limpiar */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Botón de Ordenación por Fecha/Hora de Entrada */}
+          <button
+            type="button"
+            onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0"
+            title="Cambiar ordenación por fecha y hora de entrada"
+          >
+            <ArrowUpDown className="w-3.5 h-3.5 text-amber-600" />
+            <span>{sortOrder === 'desc' ? 'Más recientes arriba ↓' : 'Más antiguas arriba ↑'}</span>
+          </button>
+
+          <div className="relative flex-1 sm:w-44">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -659,7 +671,7 @@ export function NotasView({
         </div>
       </div>
 
-      {/* LISTA DE NOTAS / CHECKLIST */}
+      {/* LISTADO CONTINUO DE NOTAS (LISTADO SIN FIN) */}
       {filteredNotas.length === 0 ? (
         <div className="bg-white rounded-3xl border border-slate-200/80 p-12 text-center shadow-xs">
           <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto mb-4 border border-amber-200">
@@ -668,16 +680,16 @@ export function NotasView({
           <h3 className="text-base font-bold text-slate-800 mb-1">
             {searchQuery || filterDateMode !== 'todos' || filterStatus !== 'pendientes'
               ? 'No hay notas con los filtros actuales'
-              : 'El bloc de notas está limpio'}
+              : 'El bloc de notas está vacío'}
           </h3>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
             {searchQuery || filterDateMode !== 'todos'
               ? 'Prueba a cambiar la fecha o borrar la búsqueda para ver más apuntes.'
-              : 'Escribe recordatorios de obra arriba o pulsa en "Croquis / Lápiz" para dibujar con el lápiz táctil de tu tablet.'}
+              : 'Escribe un apunte arriba o pulsa en "Croquis / Lápiz" para anotar con el lápiz táctil.'}
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+        <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs divide-y divide-slate-100 overflow-hidden">
           {filteredNotas.map(nota => {
             const isCompleted = Boolean(nota.completada);
             const isEditing = editingId === nota.id;
@@ -686,196 +698,179 @@ export function NotasView({
             return (
               <div
                 key={nota.id}
-                className={`group relative rounded-3xl p-4 sm:p-5 border transition-all duration-200 flex flex-col justify-between ${
+                className={`group relative p-3.5 sm:px-5 sm:py-4 transition-all duration-150 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                   isCompleted
-                    ? 'bg-slate-50/70 border-slate-200 opacity-75'
-                    : 'bg-white border-slate-200/90 shadow-2xs hover:shadow-md hover:border-amber-300'
+                    ? 'bg-slate-50/60 hover:bg-slate-50 opacity-70'
+                    : 'hover:bg-amber-50/20 bg-white'
                 }`}
               >
-                <div>
-                  {/* Fila superior: Checkbox + Badges + Acciones */}
-                  <div className="flex items-start justify-between gap-3 mb-2.5">
-                    {/* Botón Checkbox Interactivo */}
-                    <button
-                      type="button"
-                      onClick={() => onUpdateNota(nota.id, {
-                        completada: isCompleted ? 0 : 1,
-                        fecha_completada: isCompleted ? null : new Date().toISOString()
-                      })}
-                      className="cursor-pointer flex items-center gap-2.5 group/btn text-left"
-                      title={isCompleted ? 'Desmarcar apunte' : 'Marcar como revisado y tachar'}
+                {/* Lado izquierdo: Checkbox + Miniatura (si hay) + Texto y Metadata */}
+                <div className="flex items-start sm:items-center gap-3.5 flex-1 min-w-0">
+                  {/* Botón Checkbox táctil */}
+                  <button
+                    type="button"
+                    onClick={() => onUpdateNota(nota.id, {
+                      completada: isCompleted ? 0 : 1,
+                      fecha_completada: isCompleted ? null : new Date().toISOString()
+                    })}
+                    className="cursor-pointer shrink-0 pt-0.5 sm:pt-0"
+                    title={isCompleted ? 'Desmarcar' : 'Marcar como revisado'}
+                  >
+                    <div
+                      className={`w-6 h-6 rounded-xl border flex items-center justify-center transition-all ${
+                        isCompleted
+                          ? 'bg-emerald-500 border-emerald-500 text-white shadow-xs'
+                          : 'border-slate-300 bg-white hover:border-amber-500 hover:bg-amber-50'
+                      }`}
                     >
-                      <div
-                        className={`w-6 h-6 rounded-xl border flex items-center justify-center transition-all ${
-                          isCompleted
-                            ? 'bg-emerald-500 border-emerald-500 text-white shadow-xs'
-                            : 'border-slate-300 bg-white group-hover/btn:border-amber-500 group-hover/btn:bg-amber-50'
-                        }`}
-                      >
-                        {isCompleted && <Check className="w-4 h-4 stroke-[3]" />}
-                      </div>
-                      <span className="text-[11px] font-bold text-slate-400 group-hover/btn:text-slate-600">
-                        {isCompleted ? 'Revisado' : 'Pendiente'}
-                      </span>
-                    </button>
-
-                    {/* Badges: Prioridad y Obra */}
-                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                      {nota.prioridad === 'urgente' && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-200">
-                          Urgente
-                        </span>
-                      )}
-                      {nota.prioridad === 'repaso' && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-200">
-                          Repaso
-                        </span>
-                      )}
-                      {obraAsignada && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 max-w-[140px] truncate">
-                          <Building className="w-2.5 h-2.5 text-amber-600 shrink-0" />
-                          <span className="truncate">{obraAsignada.nombre}</span>
-                        </span>
-                      )}
+                      {isCompleted && <Check className="w-4 h-4 stroke-[3]" />}
                     </div>
-                  </div>
+                  </button>
 
-                  {/* Cuerpo del Texto o Miniatura Manuscrita */}
-                  <div className="mt-1">
+                  {/* Si contiene dibujo/croquis manuscrito con lápiz, miniatura compacta */}
+                  {nota.tipo === 'trazo' && nota.trazo_data && (
+                    <div
+                      onClick={() => setLightboxImage(nota.trazo_data)}
+                      className="w-16 h-12 shrink-0 bg-slate-50 rounded-xl border border-slate-200 overflow-hidden cursor-zoom-in group/thumb relative shadow-2xs"
+                      title="Toca para ampliar apunte manuscrito"
+                    >
+                      <img
+                        src={nota.trazo_data}
+                        alt="Croquis"
+                        className="w-full h-full object-contain"
+                      />
+                      <div className="absolute inset-0 bg-slate-900/10 opacity-0 group-hover/thumb:opacity-100 flex items-center justify-center transition-opacity">
+                        <Maximize2 className="w-3.5 h-3.5 text-slate-700" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Contenido principal del apunte */}
+                  <div className="flex-1 min-w-0">
                     {isEditing ? (
-                      <div className="space-y-2">
-                        <textarea
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
                           value={editingText}
                           onChange={(e) => setEditingText(e.target.value)}
-                          className="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                          rows={3}
+                          className="flex-1 px-3 py-1.5 text-xs sm:text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-amber-500 font-medium"
                           autoFocus
                         />
-                        <div className="flex items-center gap-2 justify-end">
-                          <button
-                            type="button"
-                            onClick={() => setEditingId(null)}
-                            className="px-2.5 py-1 text-xs text-slate-500 font-bold hover:text-slate-800 cursor-pointer"
-                          >
-                            Cancelar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onUpdateNota(nota.id, { texto: editingText.trim() });
-                              setEditingId(null);
-                            }}
-                            className="px-3 py-1 bg-slate-900 text-amber-400 font-bold text-xs rounded-lg cursor-pointer"
-                          >
-                            Guardar
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUpdateNota(nota.id, { texto: editingText.trim() });
+                            setEditingId(null);
+                          }}
+                          className="px-3 py-1.5 bg-slate-900 text-amber-400 font-bold text-xs rounded-xl cursor-pointer shrink-0"
+                        >
+                          Guardar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingId(null)}
+                          className="px-2 py-1.5 text-xs text-slate-500 hover:text-slate-800 font-bold cursor-pointer shrink-0"
+                        >
+                          Cancelar
+                        </button>
                       </div>
                     ) : (
-                      <div
-                        onClick={() => {
-                          if (nota.tipo !== 'trazo') {
-                            setEditingId(nota.id);
-                            setEditingText(nota.texto || '');
-                          }
-                        }}
-                        className="cursor-pointer"
-                        title={nota.tipo !== 'trazo' ? 'Toca para editar texto' : ''}
-                      >
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3">
                         <p
-                          className={`text-sm font-semibold leading-relaxed transition-all ${
+                          onClick={() => {
+                            if (nota.tipo !== 'trazo') {
+                              setEditingId(nota.id);
+                              setEditingText(nota.texto || '');
+                            }
+                          }}
+                          className={`text-xs sm:text-sm font-semibold leading-snug break-words transition-all cursor-pointer ${
                             isCompleted
                               ? 'line-through text-slate-400'
                               : 'text-slate-800 hover:text-slate-950'
                           }`}
                         >
-                          {nota.texto || '(Sin texto)'}
+                          {nota.texto || (nota.tipo === 'trazo' ? 'Apunte manuscrito con lápiz' : '(Sin texto)')}
                         </p>
 
-                        {/* Si contiene apunte o croquis a mano alzada */}
-                        {nota.tipo === 'trazo' && nota.trazo_data && (
-                          <div className="mt-3 relative rounded-2xl overflow-hidden border border-slate-200 bg-white group/img cursor-pointer">
-                            <img
-                              src={nota.trazo_data}
-                              alt="Apunte manuscrito"
-                              className="w-full h-32 object-contain bg-slate-50/50"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setLightboxImage(nota.trazo_data);
-                              }}
-                            />
-                            <div
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setLightboxImage(nota.trazo_data);
-                              }}
-                              className="absolute inset-0 bg-slate-900/10 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-all"
-                            >
-                              <span className="bg-white/90 backdrop-blur-xs px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-800 shadow-sm flex items-center gap-1">
-                                <Maximize2 className="w-3 h-3" /> Ampliar croquis
-                              </span>
-                            </div>
-                          </div>
-                        )}
+                        {/* Badges en la misma línea */}
+                        <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                          {nota.prioridad === 'urgente' && (
+                            <span className="px-2 py-0.5 rounded-md text-[9px] font-black bg-rose-100 text-rose-800 border border-rose-200">
+                              Urgente
+                            </span>
+                          )}
+                          {nota.prioridad === 'repaso' && (
+                            <span className="px-2 py-0.5 rounded-md text-[9px] font-black bg-amber-100 text-amber-900 border border-amber-200">
+                              Repaso
+                            </span>
+                          )}
+                          {obraAsignada && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-200 max-w-[150px] truncate">
+                              <Building className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                              <span className="truncate">{obraAsignada.nombre}</span>
+                            </span>
+                          )}
+                        </div>
                       </div>
                     )}
+
+                    {/* Fecha y hora de entrada */}
+                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium mt-1">
+                      <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                      <span>{formatFriendlyDate(nota.fecha_creacion)}</span>
+                      {isCompleted && nota.fecha_completada && (
+                        <span className="text-emerald-600 font-semibold ml-1">
+                          • Revisado el {formatFriendlyDate(nota.fecha_completada)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                {/* Pie de Tarjeta: Fechas & Botón "Pasar a Tarea de Obra" */}
-                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
-                  <div className="flex items-center gap-1.5" title="Fecha en que se anotó">
-                    <Clock className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{formatFriendlyDate(nota.fecha_creacion)}</span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    {/* Botón Convertir a Tarea de Obra */}
-                    {!isCompleted && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTaskConvertModal(nota);
-                          setConvertObraId(nota.obra_id || (obras[0] ? obras[0].id : ''));
-                          setConvertDia('Lunes');
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold transition-all cursor-pointer"
-                        title="Programar este apunte en la planificación semanal de la obra"
-                      >
-                        <ArrowRight className="w-3 h-3 text-amber-600" />
-                        <span className="hidden sm:inline">Pasar a Obra</span>
-                      </button>
-                    )}
-
-                    {/* Botón Editar */}
-                    {nota.tipo !== 'trazo' && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingId(nota.id);
-                          setEditingText(nota.texto || '');
-                        }}
-                        className="p-1 hover:text-slate-800 rounded-md transition-colors cursor-pointer"
-                        title="Editar nota"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-
-                    {/* Botón Borrar */}
+                {/* Lado derecho: Acciones de fila */}
+                <div className="flex items-center justify-end gap-1.5 shrink-0 sm:self-center border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
+                  {!isCompleted && (
                     <button
                       type="button"
                       onClick={() => {
-                        if (window.confirm('¿Eliminar esta anotación?')) {
-                          onDeleteNota(nota.id);
-                        }
+                        setTaskConvertModal(nota);
+                        setConvertObraId(nota.obra_id || (obras[0] ? obras[0].id : ''));
+                        setConvertDia('Lunes');
                       }}
-                      className="p-1 hover:text-rose-600 rounded-md transition-colors cursor-pointer"
-                      title="Eliminar del bloc"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold transition-all cursor-pointer"
+                      title="Pasar a la planificación semanal de la obra"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <ArrowRight className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Pasar a Obra</span>
                     </button>
-                  </div>
+                  )}
+
+                  {nota.tipo !== 'trazo' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(nota.id);
+                        setEditingText(nota.texto || '');
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                      title="Editar texto"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('¿Eliminar esta anotación?')) {
+                        onDeleteNota(nota.id);
+                      }
+                    }}
+                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                    title="Eliminar del bloc"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
             );
