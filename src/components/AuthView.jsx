@@ -17,8 +17,10 @@ import {
   getSavedAccounts,
   removeSavedAccount,
   getDisplayNameFromEmail,
+  isUserAdmin,
   CORPORATE_DOMAIN
 } from '../services/auth.js';
+import { getAllCorporateUsers } from '../services/db.js';
 
 export function AuthView({ onAuthSuccess }) {
   const [email, setEmail] = useState('');
@@ -35,6 +37,36 @@ export function AuthView({ onAuthSuccess }) {
       setEmail(accounts[0].email);
       setDisplayName(accounts[0].displayName || '');
     }
+
+    // Sincronizar usuarios corporativos registrados en Firestore para que aparezcan en todos los dispositivos
+    getAllCorporateUsers().then(cloudUsers => {
+      if (cloudUsers && cloudUsers.length > 0) {
+        setSavedAccounts(prev => {
+          const merged = [...prev];
+          cloudUsers.forEach(cu => {
+            const clean = (cu.email || '').trim().toLowerCase();
+            const existingIndex = merged.findIndex(m => m.email.toLowerCase() === clean);
+            if (existingIndex >= 0) {
+              merged[existingIndex] = {
+                ...merged[existingIndex],
+                displayName: cu.displayName || merged[existingIndex].displayName,
+                rol: cu.rol || merged[existingIndex].rol
+              };
+            } else {
+              merged.push({
+                email: clean,
+                displayName: cu.displayName || getDisplayNameFromEmail(clean),
+                rol: cu.rol || (isUserAdmin(clean) ? 'admin' : 'user'),
+                lastUsed: cu.ultimo_acceso || null
+              });
+            }
+          });
+          return merged;
+        });
+      }
+    }).catch(err => {
+      console.warn('Error sincronizando cuentas corporativas en login:', err);
+    });
   }, []);
 
   const trimmedEmail = email.trim().toLowerCase();
@@ -131,40 +163,54 @@ export function AuthView({ onAuthSuccess }) {
               </div>
 
               <div className="space-y-2">
-                {savedAccounts.map((account) => (
-                  <div
-                    key={account.email}
-                    onClick={() => handleQuickAccountClick(account)}
-                    className="p-3 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-amber-500/60 rounded-2xl flex items-center justify-between transition-all cursor-pointer group shadow-xs"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 font-bold flex items-center justify-center text-sm shadow-xs shrink-0 ring-2 ring-amber-400/20 group-hover:scale-105 transition-transform">
-                        {account.displayName ? account.displayName.charAt(0).toUpperCase() : 'U'}
+                {savedAccounts.map((account) => {
+                  const isAdmin = account.rol === 'admin' || isUserAdmin(account.email);
+                  return (
+                    <div
+                      key={account.email}
+                      onClick={() => handleQuickAccountClick(account)}
+                      className="p-3 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-amber-500/60 rounded-2xl flex items-center justify-between transition-all cursor-pointer group shadow-xs"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`w-9 h-9 rounded-xl font-bold flex items-center justify-center text-sm shadow-xs shrink-0 transition-transform group-hover:scale-105 ${
+                          isAdmin
+                            ? 'bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 ring-2 ring-amber-400/30'
+                            : 'bg-gradient-to-tr from-slate-800 to-slate-700 text-white ring-1 ring-slate-700'
+                        }`}>
+                          {account.displayName ? account.displayName.charAt(0).toUpperCase() : 'U'}
+                        </div>
+                        <div className="min-w-0 text-left">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-bold text-white truncate group-hover:text-amber-400 transition-colors">
+                              {account.displayName || account.email}
+                            </p>
+                            {isAdmin && (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                Admin
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-400 truncate font-mono">
+                            {account.email}
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0 text-left">
-                        <p className="text-sm font-bold text-white truncate group-hover:text-amber-400 transition-colors">
-                          {account.displayName || account.email}
-                        </p>
-                        <p className="text-xs text-slate-400 truncate font-mono">
-                          {account.email}
-                        </p>
+                      <div className="flex items-center gap-1 shrink-0 ml-2">
+                        <button
+                          type="button"
+                          onClick={(e) => handleRemoveAccount(e, account.email)}
+                          className="p-1.5 text-slate-600 hover:text-red-400 rounded-lg transition-colors cursor-pointer"
+                          title="Quitar de cuentas recientes"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="p-1.5 text-amber-400 group-hover:translate-x-1 transition-transform">
+                          <ArrowRight className="w-4 h-4" />
+                        </span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0 ml-2">
-                      <button
-                        type="button"
-                        onClick={(e) => handleRemoveAccount(e, account.email)}
-                        className="p-1.5 text-slate-600 hover:text-red-400 rounded-lg transition-colors cursor-pointer"
-                        title="Quitar de cuentas recientes"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                      <span className="p-1.5 text-amber-400 group-hover:translate-x-1 transition-transform">
-                        <ArrowRight className="w-4 h-4" />
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="pt-2 text-center">

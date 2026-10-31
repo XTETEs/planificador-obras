@@ -52,9 +52,10 @@ PenTool
 } from 'lucide-react';
 import { doc, setDoc } from 'firebase/firestore';
 import { migrateLocalDataToFirestore, setUserContext, getCurrentUserId, forceCloudSync, subscribeToSharedGremios, createSharedGremio, deleteSharedGremio, subscribeToOfflineStatus, flushOfflineQueue, firestore, getNotas, saveNota, updateNota, deleteNota } from './services/db.js';
-import { onAuthUserChange, logout, CORPORATE_DOMAIN } from './services/auth.js';
+import { onAuthUserChange, logout, CORPORATE_DOMAIN, isUserAdmin } from './services/auth.js';
 import { AuthView } from './components/AuthView.jsx';
 import { NotasView } from './components/NotasView.jsx';
+import { AdminUsersModal } from './components/AdminUsersModal.jsx';
 // EMBEDDED DATABASES ID
 const DB_ID = '6a548f958d05750f33c2b531';
 const DIAS_SEMANA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
@@ -280,6 +281,8 @@ const [offlineStatus, setOfflineStatus] = useState({
   pendingOfflineCount: 0,
   isFlushing: false
 });
+const [isAdminUsersModalOpen, setIsAdminUsersModalOpen] = useState(false);
+const [viewingAsUser, setViewingAsUser] = useState(null);
 const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
 const [isNewObraModalOpen, setIsNewObraModalOpen] = useState(false);
 const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
@@ -534,6 +537,7 @@ const handleLogout = async () => {
   if (!confirm(`¿Deseas cerrar tu sesión corporativa (${currentUser?.email})?`)) return;
   try {
     setIsLoggingOut(true);
+    setViewingAsUser(null);
     await logout();
     setCurrentUser(null);
     setSuccessMessage('Sesión cerrada correctamente.');
@@ -541,6 +545,30 @@ const handleLogout = async () => {
     setError('Error al cerrar sesión: ' + err.message);
   } finally {
     setIsLoggingOut(false);
+  }
+};
+
+// Acciones de supervisión para el usuario Administrador
+const handleSwitchUserView = async (targetUser) => {
+  if (!targetUser || !targetUser.uid) return;
+  try {
+    setViewingAsUser(targetUser);
+    await setUserContext(targetUser);
+    setSuccessMessage(`👁️ Modo Supervisión: Estás auditando la planificación de ${targetUser.displayName || targetUser.email}`);
+    await loadData();
+  } catch (err) {
+    setError('Error al cambiar vista de usuario: ' + err.message);
+  }
+};
+
+const handleResetUserView = async () => {
+  try {
+    setViewingAsUser(null);
+    await setUserContext(currentUser);
+    setSuccessMessage(`Has regresado a tu planificación (${currentUser?.displayName || currentUser?.email})`);
+    await loadData();
+  } catch (err) {
+    setError('Error al restaurar tu sesión: ' + err.message);
   }
 };
 // Change week
@@ -1803,6 +1831,24 @@ if (!currentUser) {
 
 return (
 <div className="min-h-screen bg-slate-50 text-slate-800">
+{/* Banner de Supervisión para el Administrador */}
+{viewingAsUser && (
+  <div className="bg-amber-500 text-slate-950 px-4 py-2.5 text-xs font-black flex items-center justify-between shadow-md z-40 sticky top-0 print:hidden">
+    <div className="flex items-center gap-2">
+      <ShieldCheck className="w-4 h-4 text-slate-950 shrink-0" />
+      <span>
+        MODO SUPERVISIÓN ADMINISTRADOR: Estás auditando la planificación de <strong>{viewingAsUser.displayName || viewingAsUser.email}</strong> ({viewingAsUser.email}).
+      </span>
+    </div>
+    <button
+      type="button"
+      onClick={handleResetUserView}
+      className="px-3 py-1 bg-slate-950 hover:bg-slate-900 text-white rounded-lg text-xs font-bold cursor-pointer transition-all border-none"
+    >
+      Volver a mi sesión ({currentUser?.displayName || 'Ximo'})
+    </button>
+  </div>
+)}
 {/* Dashboard Principal (Oculto al imprimir) */}
 <div className="print:hidden max-w-7xl mx-auto px-3 sm:px-4 py-4 md:py-10 pb-24 md:pb-10">
 {/* Header */}
@@ -1866,6 +1912,16 @@ return (
 
 {/* Usuario compacto en móvil (visible hasta sm) */}
 <div className="flex sm:hidden items-center gap-1.5 shrink-0">
+  {isUserAdmin(currentUser) && (
+    <button
+      type="button"
+      onClick={() => setIsAdminUsersModalOpen(true)}
+      className="p-2 bg-amber-50 text-amber-900 border border-amber-300 rounded-xl cursor-pointer shadow-2xs"
+      title="Panel Administrador: Ver y supervisar usuarios registrados"
+    >
+      <ShieldCheck className="w-4 h-4 text-amber-600" />
+    </button>
+  )}
   <div
     className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 font-bold flex items-center justify-center text-xs shadow-xs ring-2 ring-amber-400/40"
     title={currentUser.email}
@@ -1885,6 +1941,19 @@ return (
 </div>
 
 <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:gap-3 w-full lg:w-auto">
+{/* Botón Gestión de Usuarios para Administrador */}
+{isUserAdmin(currentUser) && (
+  <button
+    type="button"
+    onClick={() => setIsAdminUsersModalOpen(true)}
+    className="bg-amber-50 hover:bg-amber-100 text-amber-950 font-bold px-3 sm:px-4 py-2.5 rounded-xl flex items-center justify-center sm:justify-start gap-1.5 transition-all border border-amber-300 shadow-2xs hover:border-amber-400 shrink-0 cursor-pointer text-xs sm:text-sm"
+    title="Panel Administrador: Ver y supervisar todos los usuarios corporativos registrados"
+  >
+    <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+    <span className="truncate">Usuarios</span>
+    <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-amber-500 text-slate-950">Admin</span>
+  </button>
+)}
 {/* Botón Gestionar / Crear Obras */}
 <button
 type="button"
@@ -1924,9 +1993,16 @@ className="bg-slate-900 hover:bg-slate-800 text-white hover:cursor-pointer font-
       {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : (currentUser.email ? currentUser.email.charAt(0).toUpperCase() : 'U')}
     </div>
     <div className="text-left">
-      <p className="text-xs font-bold text-slate-900 leading-tight truncate max-w-[130px]" title={currentUser.displayName || currentUser.email}>
-        {currentUser.displayName || currentUser.email.split('@')[0]}
-      </p>
+      <div className="flex items-center gap-1.5">
+        <p className="text-xs font-bold text-slate-900 leading-tight truncate max-w-[130px]" title={currentUser.displayName || currentUser.email}>
+          {currentUser.displayName || currentUser.email.split('@')[0]}
+        </p>
+        {isUserAdmin(currentUser) && (
+          <span className="px-1.5 py-0.2 rounded text-[8px] font-black uppercase bg-amber-500 text-slate-950">
+            Admin
+          </span>
+        )}
+      </div>
       <p className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
         @{CORPORATE_DOMAIN}
@@ -3360,6 +3436,16 @@ className="m-3 inline-flex items-center justify-center gap-1.5 rounded-lg border
     </button>
   </div>
 </div>
+
+{/* MODAL: ADMINISTRADOR - GESTIÓN Y SUPERVISIÓN DE USUARIOS REGISTRADOS */}
+<AdminUsersModal
+  isOpen={isAdminUsersModalOpen}
+  onClose={() => setIsAdminUsersModalOpen(false)}
+  currentUser={currentUser}
+  onSwitchUserView={handleSwitchUserView}
+  viewingAsUser={viewingAsUser}
+  onResetView={handleResetUserView}
+/>
 
 {/* MODAL: MANUAL TASK CREATION */}
 {isNewTaskModalOpen && (

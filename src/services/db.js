@@ -462,19 +462,22 @@ export function setUserContext(user) {
         // Si había cambios pendientes en la cola offline, sincronizarlos ahora
         flushOfflineQueue();
 
-        // Comprobar si es el primer acceso histórico de este usuario en Firestore
+        // Actualizar/comprobar el perfil corporativo de este usuario en Firestore
         try {
           if (typeof navigator === 'undefined' || navigator.onLine) {
             const userDocRef = doc(firestore, 'users', currentUserId);
             const userSnap = await getDoc(userDocRef);
-            if (!userSnap.exists()) {
-              await setDoc(userDocRef, {
-                email: user.email || '',
-                displayName: user.displayName || '',
-                initialized: true,
-                fecha_creado: new Date().toISOString()
-              });
-            }
+            const existing = userSnap.exists() ? userSnap.data() : {};
+            const cleanEmail = (user.email || existing.email || '').trim().toLowerCase();
+            const isAdmin = cleanEmail === 'jtejuelo@enue.es' || cleanEmail === 'admin@enue.es' || cleanEmail === 'administracion@enue.es' || existing.rol === 'admin';
+            await setDoc(userDocRef, {
+              email: cleanEmail,
+              displayName: user.displayName || existing.displayName || '',
+              rol: isAdmin ? 'admin' : (existing.rol || 'user'),
+              ultimo_acceso: new Date().toISOString(),
+              fecha_creado: existing.fecha_creado || new Date().toISOString(),
+              initialized: true
+            }, { merge: true });
           }
         } catch (err) {
           console.warn('Verificación de perfil de usuario en Firestore:', err?.message);
@@ -1302,5 +1305,129 @@ export async function deleteNota(id) {
   notify(false);
   return { changes: 1 };
 }
+
+// ===============================================================
+// GESTIÓN Y SUPERVISIÓN DE USUARIOS CORPORATIVOS (ADMINISTRACIÓN)
+// ===============================================================
+
+const KNOWN_ADMIN_EMAILS = ['jtejuelo@enue.es', 'admin@enue.es', 'administracion@enue.es'];
+
+/**
+ * Obtiene la lista completa de usuarios registrados en Firestore
+ */
+export async function getAllCorporateUsers() {
+  try {
+    const snap = await withNetworkTimeout(getDocs(collection(firestore, 'users')), 10000);
+    const users = [];
+    snap.forEach(d => {
+      const data = d.data() || {};
+      if (data.email) {
+        const cleanEmail = data.email.trim().toLowerCase();
+        const isAdmin = KNOWN_ADMIN_EMAILS.includes(cleanEmail) || data.rol === 'admin';
+        users.push({
+          uid: d.id,
+          ...data,
+          rol: isAdmin ? 'admin' : (data.rol || 'user')
+        });
+      }
+    });
+    users.sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email, 'es'));
+    return users;
+  } catch (err) {
+    console.warn('Error leyendo usuarios de Firestore:', err);
+    return [];
+  }
+}
+
+/**
+ * Suscripción en tiempo real a la lista de usuarios corporativos registrados
+ */
+export function subscribeToCorporateUsers(callback) {
+  const usersCol = collection(firestore, 'users');
+  return onSnapshot(usersCol, (snap) => {
+    const users = [];
+    snap.forEach(d => {
+      const data = d.data() || {};
+      if (data.email) {
+        const cleanEmail = data.email.trim().toLowerCase();
+        const isAdmin = KNOWN_ADMIN_EMAILS.includes(cleanEmail) || data.rol === 'admin';
+        users.push({
+          uid: d.id,
+          ...data,
+          rol: isAdmin ? 'admin' : (data.rol || 'user')
+        });
+      }
+    });
+    users.sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email, 'es'));
+    callback(users);
+  }, (err) => {
+    console.warn('Error en suscripción de usuarios:', err);
+  });
+}
+
+/**
+ * Modifica el rol de un usuario corporativo (admin / user)
+ */
+export async function updateUserRole(userId, newRole) {
+  if (!userId) return;
+  const userDocRef = doc(firestore, 'users', userId);
+  await setDoc(userDocRef, { rol: newRole }, { merge: true });
+}
+
+/**
+ * Registra o pre-autoriza un nuevo usuario corporativo en Firestore
+ */
+export async function registerCorporateUser({ email, displayName, rol = 'user' }) {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail.endsWith('@enue.es')) {
+    throw new Error('El correo debe pertenecer al dominio corporativo @enue.es');
+  }
+  const uid = 'u_' + cleanEmail.replace(/[^a-z0-9]/g, '_');
+  const userDocRef = doc(firestore, 'users', uid);
+  const snap = await getDoc(userDocRef);
+  const existing = snap.exists() ? snap.data() : {};
+  const isAdmin = KNOWN_ADMIN_EMAILS.includes(cleanEmail) || rol === 'admin';
+  const payload = {
+    email: cleanEmail,
+    displayName: displayName ? displayName.trim() : cleanEmail.split('@')[0],
+    rol: isAdmin ? 'admin' : (rol || 'user'),
+    fecha_creado: existing.fecha_creado || new Date().toISOString(),
+    ultimo_acceso: existing.ultimo_acceso || null,
+    initialized: true
+  };
+  await setDoc(userDocRef, payload, { merge: true });
+  return { uid, ...payload };
+}
+
+/**
+ * Elimina o desactiva el registro de un usuario corporativo
+ */
+export async function deleteCorporateUser(userId) {
+  if (!userId) return;
+  const userDocRef = doc(firestore, 'users', userId);
+  await deleteDoc(userDocRef);
+}
+
+/**
+ * Obtiene el conteo de obras, tareas y notas de un usuario específico
+ */
+export async function getUserActivityStats(userId) {
+  if (!userId) return { obras: 0, tareas: 0, notas: 0 };
+  try {
+    const [obrasSnap, tareasSnap, notasSnap] = await Promise.all([
+      getDocs(collection(firestore, 'users', userId, 'obras')),
+      getDocs(collection(firestore, 'users', userId, 'tareas')),
+      getDocs(collection(firestore, 'users', userId, 'notas'))
+    ]);
+    return {
+      obras: obrasSnap.size,
+      tareas: tareasSnap.size,
+      notas: notasSnap.size
+    };
+  } catch (e) {
+    return { obras: 0, tareas: 0, notas: 0 };
+  }
+}
+
 
 

@@ -10,10 +10,31 @@ const EMAIL_TYPO_ALIASES = {
   'ximo@enue.es': { email: 'jtejuelo@enue.es', displayName: 'Ximo' }
 };
 
+// Cuentas de administradores con permisos para supervisar todos los usuarios registrados
+export const ADMIN_EMAILS = [
+  'jtejuelo@enue.es',
+  'admin@enue.es',
+  'administracion@enue.es'
+];
+
+/**
+ * Determina si un usuario o correo tiene rol de administrador
+ */
+export function isUserAdmin(userOrEmail) {
+  if (!userOrEmail) return false;
+  if (typeof userOrEmail === 'string') {
+    const clean = userOrEmail.trim().toLowerCase();
+    return ADMIN_EMAILS.includes(clean);
+  }
+  const email = (userOrEmail.email || '').trim().toLowerCase();
+  const role = (userOrEmail.rol || userOrEmail.role || '').trim().toLowerCase();
+  return ADMIN_EMAILS.includes(email) || role === 'admin' || userOrEmail.isAdmin === true;
+}
+
 // Cuentas corporativas registradas en Firestore para acceso rápido en cualquier dispositivo nuevo
 export const DEFAULT_CORPORATE_ACCOUNTS = [
-  { email: 'jtejuelo@enue.es', displayName: 'Ximo' },
-  { email: 'calidad@enue.es', displayName: 'Yara' }
+  { email: 'jtejuelo@enue.es', displayName: 'Ximo', rol: 'admin' },
+  { email: 'calidad@enue.es', displayName: 'Yara', rol: 'user' }
 ];
 
 let currentAuthUser = null;
@@ -123,11 +144,14 @@ export function loginWithCorporateEmail(email, customName = '') {
     : getDisplayNameFromEmail(cleanEmail);
 
   const uid = getUserIdFromEmail(cleanEmail);
+  const isAdmin = isUserAdmin(cleanEmail);
 
   const user = {
     uid,
     email: cleanEmail,
     displayName,
+    rol: isAdmin ? 'admin' : 'user',
+    isAdmin,
     lastLogin: new Date().toISOString()
   };
 
@@ -171,7 +195,8 @@ export function getSavedAccounts() {
             return {
               ...acc,
               email: norm.email,
-              displayName: norm.displayName || getDisplayNameFromEmail(norm.email)
+              displayName: norm.displayName || getDisplayNameFromEmail(norm.email),
+              rol: acc.rol || (isUserAdmin(norm.email) ? 'admin' : 'user')
             };
           });
         }
@@ -188,6 +213,7 @@ export function getSavedAccounts() {
       merged.push({
         email: defAcc.email,
         displayName: defAcc.displayName,
+        rol: defAcc.rol || (isUserAdmin(defAcc.email) ? 'admin' : 'user'),
         lastUsed: null
       });
     }

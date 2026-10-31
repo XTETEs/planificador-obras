@@ -8,6 +8,29 @@ rules_version = '2';
 //   - /obras/{obraId}
 //   - /tareas/{tareaId}
 //
+// Collection: /gremios/{gremioId}
+// Document ID: gremioId (string)
+// Fields:
+//   - nombre: string (required, 1-100 chars)
+//
+// Collection: /users/{userId}
+// Document ID: userId (string, e.g. 'u_nombre_apellido_enue_es', 1-128 chars)
+// Fields:
+//   - email: string (optional, 0-100 chars)
+//   - displayName: string (optional, 0-100 chars)
+//   - rol: string (optional, 'admin' | 'user')
+//   - fecha_creado: string (optional, ISO timestamp, max 50 chars)
+//   - ultimo_acceso: string (optional, ISO timestamp, max 50 chars)
+//   - initialized: bool (optional)
+//   - obras_count: number (optional)
+//   - tareas_count: number (optional)
+//   - remitente: string (optional, max 150 chars)
+//   - destinatario: string (optional, max 150 chars)
+//   - fecha: string (optional, max 50 chars)
+//   - asunto: string (optional, max 300 chars)
+//   - scope: string (optional, max 100 chars)
+//   - ultimo_envio_informe: map (optional)
+//
 // User-Isolated Collections:
 // Collection: /users/{userId}/obras
 // Document ID: obraId (string)
@@ -43,12 +66,10 @@ rules_version = '2';
 //   - prioridad: string | null (optional, 'normal' | 'urgente' | 'repaso')
 //   - obra_id: string | null (optional, 0-100 chars)
 //
-// Collection: /users/{userId}
-// Document ID: userId (string, e.g. 'u_nombre_apellido_enue_es')
-//
 // Access Control:
 // Users access their private space via verified corporate email (@enue.es).
 // Data is strictly isolated per userId path.
+// Registered corporate users are listable for administrative collaboration.
 //
 // ===============================================================
 
@@ -120,6 +141,24 @@ service cloud.firestore {
     // ===============================================================
     // Domain Validators
     // ===============================================================
+
+    function isValidUserProfile(data) {
+      return data.keys().size() <= 30 &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 100)) &&
+        (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+        (!('rol' in data) || (data.rol is string && data.rol in ['admin', 'user'])) &&
+        (!('fecha_creado' in data) || (data.fecha_creado is string && data.fecha_creado.size() <= 50)) &&
+        (!('ultimo_acceso' in data) || (data.ultimo_acceso is string && data.ultimo_acceso.size() <= 50)) &&
+        (!('initialized' in data) || data.initialized is bool) &&
+        (!('obras_count' in data) || data.obras_count is number) &&
+        (!('tareas_count' in data) || data.tareas_count is number) &&
+        (!('remitente' in data) || (data.remitente is string && data.remitente.size() <= 150)) &&
+        (!('destinatario' in data) || (data.destinatario is string && data.destinatario.size() <= 150)) &&
+        (!('fecha' in data) || (data.fecha is string && data.fecha.size() <= 50)) &&
+        (!('asunto' in data) || (data.asunto is string && data.asunto.size() <= 300)) &&
+        (!('scope' in data) || (data.scope is string && data.scope.size() <= 100)) &&
+        (!('ultimo_envio_informe' in data) || data.ultimo_envio_informe is map);
+    }
 
     function isValidObra(data, obraId) {
       return data.keys().hasAll(['id', 'nombre', 'activo']) &&
@@ -212,9 +251,14 @@ service cloud.firestore {
       allow delete: if true;
     }
 
-    // Per-User Isolated Data
+    // Corporate Registered Users & Isolated Workspace Data
     match /users/{userId} {
-      allow read, write: if isValidUserId(userId);
+      // Allow read (get and list) so administrators and application can list corporate users
+      allow read: if true;
+
+      // Allow profile create/update with schema and identity bounds
+      allow create, update: if isValidUserId(userId) && isValidUserProfile(request.resource.data);
+      allow delete: if isValidUserId(userId);
 
       match /obras/{obraId} {
         allow read, delete: if isValidUserId(userId);
