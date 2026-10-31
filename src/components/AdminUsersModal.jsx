@@ -25,7 +25,7 @@ import {
   deleteCorporateUser,
   getUserActivityStats
 } from '../services/db.js';
-import { CORPORATE_DOMAIN, isUserAdmin } from '../services/auth.js';
+import { CORPORATE_DOMAIN, isUserAdmin, removeSavedAccount } from '../services/auth.js';
 
 export function AdminUsersModal({
   isOpen,
@@ -41,6 +41,8 @@ export function AdminUsersModal({
   const [roleFilter, setRoleFilter] = useState('all'); // 'all' | 'admin' | 'user'
   const [userStats, setUserStats] = useState({}); // { [uid]: { obras: 0, tareas: 0, notas: 0 } }
   const [loadingStats, setLoadingStats] = useState({});
+  const [userToDelete, setUserToDelete] = useState(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
 
   // Formulario nuevo usuario
   const [showAddForm, setShowAddForm] = useState(false);
@@ -162,18 +164,26 @@ export function AdminUsersModal({
     }
   };
 
-  const handleDeleteUser = async (user) => {
+  const handleRequestDeleteUser = (user) => {
     if (user.email === currentUser?.email) {
       alert('No puedes eliminar tu propia cuenta mientras estás conectado.');
       return;
     }
-    if (!confirm(`¿Eliminar al usuario ${user.displayName || user.email} de la lista corporativa de Firestore?`)) {
-      return;
-    }
+    setUserToDelete(user);
+  };
+
+  const handleConfirmDeleteUser = async () => {
+    if (!userToDelete) return;
+    setIsDeletingUser(true);
     try {
-      await deleteCorporateUser(user.uid);
+      await deleteCorporateUser(userToDelete.uid);
+      removeSavedAccount(userToDelete.email);
+      setUsers(prev => prev.filter(u => u.uid !== userToDelete.uid));
+      setUserToDelete(null);
     } catch (err) {
-      alert('Error eliminando usuario: ' + err.message);
+      alert('Error eliminando usuario corporativo: ' + (err?.message || err));
+    } finally {
+      setIsDeletingUser(false);
     }
   };
 
@@ -572,9 +582,9 @@ export function AdminUsersModal({
                       {!isMe && (
                         <button
                           type="button"
-                          onClick={() => handleDeleteUser(user)}
+                          onClick={() => handleRequestDeleteUser(user)}
                           className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-red-200"
-                          title="Eliminar registro de Firestore"
+                          title="Eliminar usuario corporativo"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -601,6 +611,62 @@ export function AdminUsersModal({
           </button>
         </div>
       </div>
+
+      {/* CARTEL DE CONFIRMACIÓN PARA ELIMINAR USUARIO */}
+      {userToDelete && (
+        <div
+          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-fadeIn"
+          onClick={() => { if (!isDeletingUser) setUserToDelete(null); }}
+        >
+          <div
+            className="bg-white rounded-3xl p-6 sm:p-7 shadow-2xl max-w-sm w-full text-center space-y-4 animate-scaleIn border border-slate-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-14 h-14 rounded-2xl bg-red-100 text-red-600 mx-auto flex items-center justify-center ring-8 ring-red-50 shadow-md">
+              <Trash2 className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="text-lg font-black text-slate-900">¿Eliminar usuario?</h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Estás a punto de eliminar al usuario <strong className="text-slate-900 font-bold">{userToDelete.displayName || userToDelete.email}</strong>.
+              </p>
+              <p className="text-[11px] font-mono text-slate-500 bg-slate-100 p-2 rounded-xl break-all">
+                {userToDelete.email}
+              </p>
+              <p className="text-[11px] text-red-600 font-semibold pt-1">
+                ⚠️ Se borrará su registro de Firestore y todas sus obras y tareas asociadas.
+              </p>
+            </div>
+
+            <div className="flex gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={() => setUserToDelete(null)}
+                className="flex-1 py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer transition-colors border-none disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={handleConfirmDeleteUser}
+                className="flex-1 py-3 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white font-black text-xs cursor-pointer transition-colors shadow-lg shadow-red-600/20 border-none flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {isDeletingUser ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Eliminando...</span>
+                  </>
+                ) : (
+                  <span>Sí, Eliminar</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

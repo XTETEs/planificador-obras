@@ -9,7 +9,8 @@ import {
   Clock,
   Trash2,
   CheckCircle2,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 import {
   loginWithCorporateEmail,
@@ -18,9 +19,10 @@ import {
   removeSavedAccount,
   getDisplayNameFromEmail,
   isUserAdmin,
+  isAccountDeleted,
   CORPORATE_DOMAIN
 } from '../services/auth.js';
-import { getAllCorporateUsers } from '../services/db.js';
+import { getAllCorporateUsers, deleteCorporateUser } from '../services/db.js';
 
 export function AuthView({ onAuthSuccess }) {
   const [email, setEmail] = useState('');
@@ -28,6 +30,8 @@ export function AuthView({ onAuthSuccess }) {
   const [error, setError] = useState(null);
   const [savedAccounts, setSavedAccounts] = useState([]);
   const [isChangingAccount, setIsChangingAccount] = useState(false);
+  const [accountToDelete, setAccountToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     const accounts = getSavedAccounts();
@@ -45,6 +49,9 @@ export function AuthView({ onAuthSuccess }) {
           const merged = [...prev];
           cloudUsers.forEach(cu => {
             const clean = (cu.email || '').trim().toLowerCase();
+            // Si el usuario fue expresamente eliminado, no reincorporarlo
+            if (isAccountDeleted(clean)) return;
+
             const existingIndex = merged.findIndex(m => m.email.toLowerCase() === clean);
             if (existingIndex >= 0) {
               merged[existingIndex] = {
@@ -103,14 +110,43 @@ export function AuthView({ onAuthSuccess }) {
     handleLogin(account.email, account.displayName);
   };
 
-  const handleRemoveAccount = (e, emailToRemove) => {
+  // Abrir cartel de confirmación antes de eliminar
+  const handleRequestDelete = (e, account) => {
     e.stopPropagation();
-    removeSavedAccount(emailToRemove);
-    const updated = getSavedAccounts();
-    setSavedAccounts(updated);
-    if (trimmedEmail === emailToRemove) {
-      setEmail('');
-      setDisplayName('');
+    setError(null);
+    setAccountToDelete(account);
+  };
+
+  // Confirmar y ejecutar la eliminación en Firestore y en almacenamiento local
+  const handleConfirmDelete = async () => {
+    if (!accountToDelete) return;
+    setIsDeleting(true);
+    setError(null);
+
+    const emailToRemove = accountToDelete.email.trim().toLowerCase();
+    const uidToRemove = accountToDelete.uid || ('u_' + emailToRemove.replace(/[^a-z0-9]/g, '_'));
+
+    try {
+      // 1. Eliminar permanentemente de Firestore (documento y subcolecciones)
+      await deleteCorporateUser(uidToRemove);
+
+      // 2. Eliminar del almacenamiento local y marcar en la lista de exclusión
+      removeSavedAccount(emailToRemove);
+
+      // 3. Actualizar la lista en pantalla
+      setSavedAccounts(prev => prev.filter(a => a.email.toLowerCase() !== emailToRemove));
+
+      if (trimmedEmail === emailToRemove) {
+        setEmail('');
+        setDisplayName('');
+      }
+
+      setAccountToDelete(null);
+    } catch (err) {
+      console.error('Error al eliminar usuario corporativo:', err);
+      setError('Error al eliminar el usuario: ' + (err?.message || err));
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -198,9 +234,9 @@ export function AuthView({ onAuthSuccess }) {
                       <div className="flex items-center gap-1 shrink-0 ml-2">
                         <button
                           type="button"
-                          onClick={(e) => handleRemoveAccount(e, account.email)}
-                          className="p-1.5 text-slate-600 hover:text-red-400 rounded-lg transition-colors cursor-pointer"
-                          title="Quitar de cuentas recientes"
+                          onClick={(e) => handleRequestDelete(e, account)}
+                          className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                          title="Eliminar usuario corporativo"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -318,6 +354,62 @@ export function AuthView({ onAuthSuccess }) {
           <span>ENUE Proyectos © {new Date().getFullYear()}</span>
         </div>
       </div>
+
+      {/* CARTEL DE CONFIRMACIÓN PARA ELIMINAR USUARIO */}
+      {accountToDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-fadeIn"
+          onClick={() => { if (!isDeleting) setAccountToDelete(null); }}
+        >
+          <div
+            className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-7 shadow-2xl max-w-sm w-full text-center space-y-4 animate-scaleIn text-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-14 h-14 rounded-2xl bg-red-500/20 text-red-400 mx-auto flex items-center justify-center ring-8 ring-red-500/10 shadow-lg">
+              <Trash2 className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="text-lg font-black text-white">¿Eliminar usuario?</h3>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Estás a punto de eliminar al usuario <strong className="text-amber-400 font-bold">{accountToDelete.displayName || accountToDelete.email}</strong>.
+              </p>
+              <p className="text-[11px] font-mono text-slate-400 bg-slate-950/80 p-2 rounded-xl border border-slate-800 break-all">
+                {accountToDelete.email}
+              </p>
+              <p className="text-[11px] text-red-300/80 pt-1">
+                ⚠️ Se borrará su registro de Firestore y de este dispositivo de forma definitiva.
+              </p>
+            </div>
+
+            <div className="flex gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setAccountToDelete(null)}
+                className="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition-colors border-none disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleConfirmDelete}
+                className="flex-1 py-3 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white font-black text-xs cursor-pointer transition-colors shadow-lg shadow-red-600/30 border-none flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Eliminando...</span>
+                  </>
+                ) : (
+                  <span>Sí, Eliminar</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1400,12 +1400,53 @@ export async function registerCorporateUser({ email, displayName, rol = 'user' }
 }
 
 /**
- * Elimina o desactiva el registro de un usuario corporativo
+ * Elimina completamente un usuario corporativo y todos sus datos de Firestore
  */
 export async function deleteCorporateUser(userId) {
   if (!userId) return;
-  const userDocRef = doc(firestore, 'users', userId);
-  await deleteDoc(userDocRef);
+  const cleanId = String(userId).trim();
+
+  try {
+    // 1. Eliminar documentos de sus subcolecciones (obras, tareas, notas)
+    const [obrasSnap, tareasSnap, notasSnap] = await Promise.all([
+      getDocs(collection(firestore, 'users', cleanId, 'obras')),
+      getDocs(collection(firestore, 'users', cleanId, 'tareas')),
+      getDocs(collection(firestore, 'users', cleanId, 'notas'))
+    ]);
+
+    let batch = writeBatch(firestore);
+    let count = 0;
+
+    for (const d of obrasSnap.docs) {
+      batch.delete(d.ref);
+      count++;
+      if (count >= 300) { await batch.commit(); batch = writeBatch(firestore); count = 0; }
+    }
+    for (const d of tareasSnap.docs) {
+      batch.delete(d.ref);
+      count++;
+      if (count >= 300) { await batch.commit(); batch = writeBatch(firestore); count = 0; }
+    }
+    for (const d of notasSnap.docs) {
+      batch.delete(d.ref);
+      count++;
+      if (count >= 300) { await batch.commit(); batch = writeBatch(firestore); count = 0; }
+    }
+    if (count > 0) {
+      await batch.commit();
+    }
+  } catch (err) {
+    console.warn('Advertencia al limpiar subcolecciones de usuario:', err);
+  }
+
+  // 2. Eliminar el documento principal del usuario
+  try {
+    const userDocRef = doc(firestore, 'users', cleanId);
+    await deleteDoc(userDocRef);
+  } catch (err) {
+    console.error('Error eliminando documento de usuario en Firestore:', err);
+    throw err;
+  }
 }
 
 /**

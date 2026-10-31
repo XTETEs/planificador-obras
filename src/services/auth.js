@@ -2,6 +2,43 @@ export const CORPORATE_DOMAIN = 'enue.es';
 
 const STORAGE_ACTIVE_USER_KEY = 'enue_active_user';
 const STORAGE_SAVED_ACCOUNTS_KEY = 'enue_saved_accounts';
+const STORAGE_DELETED_ACCOUNTS_KEY = 'enue_deleted_accounts';
+
+export function markAccountAsDeleted(email) {
+  if (!email || typeof window === 'undefined') return;
+  try {
+    const clean = email.trim().toLowerCase();
+    const raw = localStorage.getItem(STORAGE_DELETED_ACCOUNTS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    if (!list.includes(clean)) {
+      list.push(clean);
+      localStorage.setItem(STORAGE_DELETED_ACCOUNTS_KEY, JSON.stringify(list));
+    }
+  } catch (e) {}
+}
+
+export function isAccountDeleted(email) {
+  if (!email || typeof window === 'undefined') return false;
+  try {
+    const clean = email.trim().toLowerCase();
+    const raw = localStorage.getItem(STORAGE_DELETED_ACCOUNTS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) && list.includes(clean);
+  } catch (e) {
+    return false;
+  }
+}
+
+export function unmarkAccountAsDeleted(email) {
+  if (!email || typeof window === 'undefined') return;
+  try {
+    const clean = email.trim().toLowerCase();
+    const raw = localStorage.getItem(STORAGE_DELETED_ACCOUNTS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    const filtered = list.filter(e => e !== clean);
+    localStorage.setItem(STORAGE_DELETED_ACCOUNTS_KEY, JSON.stringify(filtered));
+  } catch (e) {}
+}
 
 // Corrección automática de errores tipográficos frecuentes en teclados móviles/tablets
 const EMAIL_TYPO_ALIASES = {
@@ -146,6 +183,9 @@ export function loginWithCorporateEmail(email, customName = '') {
   const uid = getUserIdFromEmail(cleanEmail);
   const isAdmin = isUserAdmin(cleanEmail);
 
+  // Asegurar que si estaba marcada como eliminada, se rehabilite
+  unmarkAccountAsDeleted(cleanEmail);
+
   const user = {
     uid,
     email: cleanEmail,
@@ -190,15 +230,17 @@ export function getSavedAccounts() {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          localAccounts = parsed.map(acc => {
-            const norm = normalizeCorporateEmail(acc.email, acc.displayName);
-            return {
-              ...acc,
-              email: norm.email,
-              displayName: norm.displayName || getDisplayNameFromEmail(norm.email),
-              rol: acc.rol || (isUserAdmin(norm.email) ? 'admin' : 'user')
-            };
-          });
+          localAccounts = parsed
+            .filter(acc => !isAccountDeleted(acc.email))
+            .map(acc => {
+              const norm = normalizeCorporateEmail(acc.email, acc.displayName);
+              return {
+                ...acc,
+                email: norm.email,
+                displayName: norm.displayName || getDisplayNameFromEmail(norm.email),
+                rol: acc.rol || (isUserAdmin(norm.email) ? 'admin' : 'user')
+              };
+            });
         }
       }
     } catch (e) {
@@ -207,9 +249,9 @@ export function getSavedAccounts() {
   }
 
   // Combinar sin duplicados con las cuentas corporativas activas para que aparezcan en tablets y móviles nuevos
-  const merged = [...localAccounts];
+  const merged = localAccounts.filter(a => !isAccountDeleted(a.email));
   for (const defAcc of DEFAULT_CORPORATE_ACCOUNTS) {
-    if (!merged.some(a => a.email === defAcc.email)) {
+    if (!isAccountDeleted(defAcc.email) && !merged.some(a => a.email.toLowerCase() === defAcc.email.toLowerCase())) {
       merged.push({
         email: defAcc.email,
         displayName: defAcc.displayName,
@@ -218,18 +260,39 @@ export function getSavedAccounts() {
       });
     }
   }
-  return merged;
+  return merged.filter(a => !isAccountDeleted(a.email));
 }
 
 /**
- * Elimina una cuenta de la lista de cuentas recordadas
+ * Elimina una cuenta de la lista de cuentas recordadas y la marca en la lista de exclusión
  */
 export function removeSavedAccount(email) {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined' || !email) return;
   try {
-    const accounts = getSavedAccounts().filter(a => a.email !== email);
-    localStorage.setItem(STORAGE_SAVED_ACCOUNTS_KEY, JSON.stringify(accounts));
-  } catch (e) {}
+    const clean = email.trim().toLowerCase();
+    markAccountAsDeleted(clean);
+
+    const raw = localStorage.getItem(STORAGE_SAVED_ACCOUNTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const filtered = parsed.filter(a => (a.email || '').trim().toLowerCase() !== clean);
+        localStorage.setItem(STORAGE_SAVED_ACCOUNTS_KEY, JSON.stringify(filtered));
+      }
+    }
+
+    // Si la cuenta eliminada es la activa actual en sesión, limpiarla
+    const activeRaw = localStorage.getItem(STORAGE_ACTIVE_USER_KEY);
+    if (activeRaw) {
+      const parsedActive = JSON.parse(activeRaw);
+      if (parsedActive?.email?.toLowerCase() === clean) {
+        localStorage.removeItem(STORAGE_ACTIVE_USER_KEY);
+        currentAuthUser = null;
+      }
+    }
+  } catch (e) {
+    console.warn('Error en removeSavedAccount:', e);
+  }
 }
 
 /**
